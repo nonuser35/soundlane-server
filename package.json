@@ -1,0 +1,20 @@
+{
+  "name": "soundlane-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@discordjs/voice": "0.19.2",
+    "discord.js": "14.27.0",
+    "libsodium-wrappers": "0.8.4",
+    "opusscript": "0.1.1",
+    "ws": "8.22.0"
+  }
+}

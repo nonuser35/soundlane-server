@@ -1,0 +1,259 @@
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  Client,
+  EmbedBuilder,
+  Events,
+  GatewayIntentBits,
+  MessageFlags,
+  ModalBuilder,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  TextInputBuilder,
+  TextInputStyle
+} from "discord.js";
+import {
+  AudioPlayerStatus,
+  NoSubscriberBehavior,
+  StreamType,
+  createAudioPlayer,
+  createAudioResource,
+  joinVoiceChannel
+} from "@discordjs/voice";
+
+const ephemeral = { flags: MessageFlags.Ephemeral };
+
+export class DiscordRelayBot {
+  constructor(config, store, audioHub) {
+    this.config = config;
+    this.store = store;
+    this.audioHub = audioHub;
+    this.client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
+    this.connections = new Map();
+    this.players = new Map();
+    this.publisherStreams = new Map();
+
+    audioHub.on("publisherStarted", (guildId, stream) => this.attachPublisher(guildId, stream));
+    audioHub.on("publisherStopped", (guildId) => this.publisherStreams.delete(guildId));
+  }
+
+  async start() {
+    await this.registerCommands();
+    this.client.on(Events.InteractionCreate, (interaction) => this.handleInteraction(interaction).catch(console.error));
+    await this.client.login(this.config.discordToken);
+  }
+
+  async registerCommands() {
+    const commands = [
+      new SlashCommandBuilder().setName("join").setDescription("Coloca o bot no seu canal de voz"),
+      new SlashCommandBuilder().setName("leave").setDescription("Remove o bot do canal de voz"),
+      new SlashCommandBuilder().setName("help").setDescription("Abre o painel de audio")
+    ].map((command) => command.toJSON());
+    const rest = new REST({ version: "10" }).setToken(this.config.discordToken);
+    await rest.put(Routes.applicationCommands(this.config.discordClientId), { body: commands });
+  }
+
+  async handleInteraction(interaction) {
+    if (!interaction.inGuild()) return;
+
+    if (interaction.isChatInputCommand()) {
+      if (interaction.commandName === "join") return this.join(interaction);
+      if (interaction.commandName === "leave") return this.leave(interaction);
+      return interaction.reply({ ...ephemeral, ...this.mainPanel(interaction.guildId) });
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === "relay:pairing-modal") {
+      return this.savePairing(interaction);
+    }
+
+    if (!interaction.isButton()) return;
+    switch (interaction.customId) {
+      case "relay:join": return this.join(interaction);
+      case "relay:leave": return this.leave(interaction);
+      case "relay:main": return interaction.update(this.mainPanel(interaction.guildId));
+      case "relay:connection": return interaction.update(this.connectionPanel(interaction.guildId));
+      case "relay:listen": return interaction.update(this.listenerPanel(interaction.guildId));
+      case "relay:help": return interaction.update(this.helpPanel());
+      case "relay:add-code": return interaction.showModal(this.pairingModal());
+      case "relay:remove-code": return interaction.update(this.removeConfirmation(interaction.guildId));
+      case "relay:confirm-remove": return this.removePairing(interaction);
+      default: return interaction.update(this.mainPanel(interaction.guildId));
+    }
+  }
+
+  statusFields(guildId) {
+    const guild = this.store.getGuild(guildId);
+    const connection = this.connections.get(guildId);
+    return [
+      { name: "Aplicativo", value: guild ? `Conectado: ${guild.clientName}` : "Nao conectado", inline: true },
+      { name: "Transmissao", value: this.audioHub.isLive(guildId) ? "Ativa" : "Em espera", inline: true },
+      { name: "Canal", value: connection?.joinConfig.channelId ? `<#${connection.joinConfig.channelId}>` : "Fora do canal", inline: true },
+      { name: "Extensao", value: `${this.audioHub.listenerCount(guildId)} ouvinte(s)`, inline: true }
+    ];
+  }
+
+  mainPanel(guildId) {
+    const embed = new EmbedBuilder()
+      .setTitle("Painel de audio")
+      .setDescription("Controle a transmissao e a conexao do programa.")
+      .setColor(0x10975b)
+      .addFields(this.statusFields(guildId));
+    return {
+      embeds: [embed],
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("relay:join").setLabel("Entrar").setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId("relay:leave").setLabel("Sair").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("relay:connection").setLabel("Gerenciar conexao").setStyle(ButtonStyle.Primary)
+        ),
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("relay:listen").setLabel("Ouvir pela extensao").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setLabel("Baixar programa").setStyle(ButtonStyle.Link).setURL(this.config.downloadUrl),
+          new ButtonBuilder().setCustomId("relay:help").setLabel("Ajuda").setStyle(ButtonStyle.Secondary)
+        )
+      ]
+    };
+  }
+
+  connectionPanel(guildId) {
+    const guild = this.store.getGuild(guildId);
+    const description = guild
+      ? `Computador conectado: **${guild.clientName}**\nVinculado por **${guild.pairedByUserName}**.`
+      : "Nenhum programa esta conectado. Baixe o programa, gere um codigo e insira-o aqui.";
+    return {
+      embeds: [new EmbedBuilder().setTitle("Conexao do programa").setDescription(description).setColor(0x10975b)],
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("relay:add-code").setLabel("Adicionar ou trocar codigo").setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId("relay:remove-code").setLabel("Remover codigo").setStyle(ButtonStyle.Danger).setDisabled(!guild),
+          new ButtonBuilder().setCustomId("relay:main").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
+        ),
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setLabel("Baixar programa").setStyle(ButtonStyle.Link).setURL(this.config.downloadUrl)
+        )
+      ]
+    };
+  }
+
+  listenerPanel(guildId) {
+    const guild = this.store.getGuild(guildId);
+    const description = guild
+      ? `Abra a extensao, selecione **Ouvir transmissao** e informe:\n\n**${guild.listenerCode}**\n\nO audio comeca depois de clicar em Ouvir.`
+      : "Conecte primeiro um programa Windows para criar a sessao de escuta.";
+    return {
+      embeds: [new EmbedBuilder().setTitle("Ouvir pela extensao").setDescription(description).setColor(0x10975b)],
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("relay:main").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
+      )]
+    };
+  }
+
+  helpPanel() {
+    return {
+      embeds: [new EmbedBuilder()
+        .setTitle("Ajuda")
+        .setDescription("`/join` entra no seu canal.\n`/leave` sai do canal.\n`/help` abre este painel.\n\nA conexao e os codigos ficam em **Gerenciar conexao**.")
+        .setColor(0x10975b)],
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("relay:main").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
+      )]
+    };
+  }
+
+  pairingModal() {
+    return new ModalBuilder()
+      .setCustomId("relay:pairing-modal")
+      .setTitle("Conectar programa")
+      .addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("code")
+          .setLabel("Codigo gerado no programa")
+          .setPlaceholder("ABC123")
+          .setMinLength(6)
+          .setMaxLength(8)
+          .setRequired(true)
+          .setStyle(TextInputStyle.Short)
+      ));
+  }
+
+  removeConfirmation(guildId) {
+    return {
+      embeds: [new EmbedBuilder()
+        .setTitle("Remover conexao?")
+        .setDescription("O computador atual perdera o acesso. Qualquer membro podera adicionar outro codigo depois.")
+        .setColor(0xc83f32)],
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("relay:confirm-remove").setLabel("Salvar remocao").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId("relay:connection").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
+      )]
+    };
+  }
+
+  async savePairing(interaction) {
+    const code = interaction.fields.getTextInputValue("code");
+    const record = await this.store.completePairing(code, interaction.guild, interaction.user);
+    if (!record) {
+      return interaction.reply({ ...ephemeral, content: "Codigo invalido ou expirado. Gere outro no programa e tente novamente." });
+    }
+    this.audioHub.disconnectGuild(interaction.guildId);
+    return interaction.reply({ ...ephemeral, content: "Conexao salva.", ...this.mainPanel(interaction.guildId) });
+  }
+
+  async removePairing(interaction) {
+    await this.store.removeGuild(interaction.guildId, interaction.user);
+    this.audioHub.disconnectGuild(interaction.guildId);
+    this.connections.get(interaction.guildId)?.destroy();
+    this.connections.delete(interaction.guildId);
+    return interaction.update(this.connectionPanel(interaction.guildId));
+  }
+
+  async join(interaction) {
+    if (!this.store.getGuild(interaction.guildId)) {
+      const payload = this.connectionPanel(interaction.guildId);
+      return interaction.isButton() ? interaction.update(payload) : interaction.reply({ ...ephemeral, ...payload });
+    }
+    const channel = interaction.member?.voice?.channel;
+    if (!channel) {
+      const payload = { content: "Entre em um canal de voz primeiro." };
+      return interaction.isButton() ? interaction.reply({ ...ephemeral, ...payload }) : interaction.reply({ ...ephemeral, ...payload });
+    }
+    const connection = joinVoiceChannel({
+      channelId: channel.id,
+      guildId: interaction.guildId,
+      adapterCreator: interaction.guild.voiceAdapterCreator,
+      selfDeaf: true
+    });
+    this.connections.set(interaction.guildId, connection);
+    const player = this.getPlayer(interaction.guildId);
+    connection.subscribe(player);
+    const payload = this.mainPanel(interaction.guildId);
+    return interaction.isButton() ? interaction.update(payload) : interaction.reply({ ...ephemeral, ...payload });
+  }
+
+  async leave(interaction) {
+    this.connections.get(interaction.guildId)?.destroy();
+    this.connections.delete(interaction.guildId);
+    const payload = this.mainPanel(interaction.guildId);
+    return interaction.isButton() ? interaction.update(payload) : interaction.reply({ ...ephemeral, ...payload });
+  }
+
+  getPlayer(guildId) {
+    let player = this.players.get(guildId);
+    if (!player) {
+      player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+      player.on("error", (error) => console.error(`Audio ${guildId}:`, error));
+      this.players.set(guildId, player);
+    }
+    return player;
+  }
+
+  attachPublisher(guildId, stream) {
+    this.publisherStreams.set(guildId, stream);
+    const player = this.getPlayer(guildId);
+    const resource = createAudioResource(stream, { inputType: StreamType.Raw });
+    player.play(resource);
+    if (player.state.status === AudioPlayerStatus.Idle) console.warn(`Player ${guildId} permaneceu ocioso.`);
+  }
+}
