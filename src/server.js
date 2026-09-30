@@ -17,6 +17,7 @@ const config = {
 const store = new RelayStore(resolve(config.dataDir, "relay-store.json"));
 await store.load();
 const audioHub = new AudioHub(store);
+let bot = null;
 
 function json(response, statusCode, body) {
   response.writeHead(statusCode, {
@@ -51,7 +52,11 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/health") {
-      return json(response, 200, { status: "ok" });
+      return json(response, 200, {
+        status: "ok",
+        audio: audioHub.diagnostics(),
+        discord: bot?.diagnostics() ?? { connected: false }
+      });
     }
 
     if (request.method === "POST" && url.pathname === "/api/v1/pairings") {
@@ -100,7 +105,7 @@ server.listen(config.port, "0.0.0.0", () => {
 });
 
 if (config.discordToken && config.discordClientId) {
-  const bot = new DiscordRelayBot(config, store, audioHub);
+  bot = new DiscordRelayBot(config, store, audioHub);
   await bot.start();
   console.log("Bot do Discord conectado.");
 } else {

@@ -18,6 +18,9 @@ export class AudioHub extends EventEmitter {
     this.store = store;
     this.publishers = new Map();
     this.listeners = new Map();
+    this.framesReceived = 0;
+    this.bytesReceived = 0;
+    this.lastFrameAt = null;
   }
 
   acceptPublisher(socket, token) {
@@ -28,10 +31,14 @@ export class AudioHub extends EventEmitter {
     this.publishers.set(guild.guildId, socket);
     const discordPcm = new PassThrough({ highWaterMark: 38400 });
     this.emit("publisherStarted", guild.guildId, discordPcm);
+    console.log(`Transmissao iniciada para um servidor.`);
 
     socket.on("message", (data, isBinary) => {
       if (!isBinary || data.length > 1024 * 1024) return;
       const frame = Buffer.from(data);
+      this.framesReceived += 1;
+      this.bytesReceived += frame.length;
+      this.lastFrameAt = new Date().toISOString();
       discordPcm.write(float32ToPcm16(frame));
       for (const listener of this.listeners.get(guild.guildId) ?? []) {
         if (listener.readyState === WebSocket.OPEN && listener.bufferedAmount < 512 * 1024) {
@@ -43,6 +50,7 @@ export class AudioHub extends EventEmitter {
       if (this.publishers.get(guild.guildId) === socket) this.publishers.delete(guild.guildId);
       discordPcm.end();
       this.emit("publisherStopped", guild.guildId);
+      console.log(`Transmissao encerrada para um servidor.`);
     });
     socket.send(JSON.stringify({ type: "ready", guildName: guild.guildName }));
     return true;
@@ -76,6 +84,16 @@ export class AudioHub extends EventEmitter {
 
   listenerCount(guildId) {
     return this.listeners.get(guildId)?.size ?? 0;
+  }
+
+  diagnostics() {
+    return {
+      publishers: this.publishers.size,
+      listeners: [...this.listeners.values()].reduce((total, listeners) => total + listeners.size, 0),
+      framesReceived: this.framesReceived,
+      bytesReceived: this.bytesReceived,
+      lastFrameAt: this.lastFrameAt
+    };
   }
 
   disconnectGuild(guildId) {

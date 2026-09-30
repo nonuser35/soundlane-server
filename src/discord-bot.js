@@ -18,8 +18,10 @@ import {
   AudioPlayerStatus,
   NoSubscriberBehavior,
   StreamType,
+  VoiceConnectionStatus,
   createAudioPlayer,
   createAudioResource,
+  entersState,
   joinVoiceChannel
 } from "@discordjs/voice";
 
@@ -34,6 +36,8 @@ export class DiscordRelayBot {
     this.connections = new Map();
     this.players = new Map();
     this.publisherStreams = new Map();
+    this.playerStates = new Map();
+    this.voiceStates = new Map();
 
     audioHub.on("publisherStarted", (guildId, stream) => this.attachPublisher(guildId, stream));
     audioHub.on("publisherStopped", (guildId) => this.publisherStreams.delete(guildId));
@@ -219,6 +223,9 @@ export class DiscordRelayBot {
       const payload = { content: "Entre em um canal de voz primeiro." };
       return interaction.isButton() ? interaction.reply({ ...ephemeral, ...payload }) : interaction.reply({ ...ephemeral, ...payload });
     }
+    await interaction.deferReply(ephemeral);
+    const previousConnection = this.connections.get(interaction.guildId);
+    previousConnection?.destroy();
     const connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: interaction.guildId,
@@ -226,10 +233,22 @@ export class DiscordRelayBot {
       selfDeaf: true
     });
     this.connections.set(interaction.guildId, connection);
+    connection.on("stateChange", (_, state) => {
+      this.voiceStates.set(interaction.guildId, state.status);
+      console.log(`Conexao de voz: ${state.status}`);
+    });
+    try {
+      await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+    } catch (error) {
+      connection.destroy();
+      this.connections.delete(interaction.guildId);
+      console.error("Falha ao conectar ao canal de voz:", error);
+      return interaction.editReply({ content: "Nao consegui concluir a conexao de voz. Tente /join novamente." });
+    }
     const player = this.getPlayer(interaction.guildId);
     connection.subscribe(player);
     const payload = this.mainPanel(interaction.guildId);
-    return interaction.isButton() ? interaction.update(payload) : interaction.reply({ ...ephemeral, ...payload });
+    return interaction.editReply(payload);
   }
 
   async leave(interaction) {
@@ -244,6 +263,10 @@ export class DiscordRelayBot {
     if (!player) {
       player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
       player.on("error", (error) => console.error(`Audio ${guildId}:`, error));
+      player.on("stateChange", (_, state) => {
+        this.playerStates.set(guildId, state.status);
+        console.log(`Player de audio: ${state.status}`);
+      });
       this.players.set(guildId, player);
     }
     return player;
@@ -255,5 +278,14 @@ export class DiscordRelayBot {
     const resource = createAudioResource(stream, { inputType: StreamType.Raw });
     player.play(resource);
     if (player.state.status === AudioPlayerStatus.Idle) console.warn(`Player ${guildId} permaneceu ocioso.`);
+  }
+
+  diagnostics() {
+    return {
+      voiceConnections: this.connections.size,
+      voiceStates: [...this.voiceStates.values()],
+      playerStates: [...this.playerStates.values()],
+      publisherStreams: this.publisherStreams.size
+    };
   }
 }
