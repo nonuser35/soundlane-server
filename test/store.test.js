@@ -24,11 +24,32 @@ test("pairing creates a reusable guild session without storing the raw token", a
     assert.equal(store.resolveAccessToken(pairing.accessToken).guildId, "guild-1");
     assert.equal(store.resolveListenerCredential(guild.listenerCode).guildName, "Servidor");
     assert.equal(Object.hasOwn(store.getGuild("guild-1"), "accessToken"), false);
-    assert.equal(store.state.audit[0].action, "pairing_added");
+    assert.equal(store.state.audit[0].action, "device_added");
 
     await store.removeGuild("guild-1", { id: "user-2", username: "Outra pessoa" });
     assert.equal(store.state.audit[1].action, "pairing_removed");
     assert.equal(store.state.audit[1].userName, "Outra pessoa");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("multiple desktop devices remain registered in the same Discord guild", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-devices-"));
+  try {
+    const store = new RelayStore(join(directory, "store.json"));
+    await store.load();
+    const guild = { id: "guild-1", name: "Servidor" };
+    const user = { id: "user-1", username: "Pessoa" };
+
+    const first = await store.createPairing({ clientName: "PC Sala", deviceId: "device-1" }, null);
+    await store.completePairing(first.code, guild, user);
+    const second = await store.createPairing({ clientName: "Notebook", deviceId: "device-2" }, null);
+    await store.completePairing(second.code, guild, user);
+
+    assert.equal(store.getGuildDevices(guild.id).length, 2);
+    assert.equal(store.resolveAccessToken(first.accessToken).clientName, "PC Sala");
+    assert.equal(store.resolveAccessToken(second.accessToken).clientName, "Notebook");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -140,6 +161,32 @@ test("audio hub identifies protocol v2 as Opus before starting Discord playback"
   assert.equal(codec, "opus");
   stream.destroy();
   socket.close();
+});
+
+test("first publisher keeps the jam and a different device is rejected as busy", async () => {
+  class Socket extends EventEmitter {
+    readyState = 1;
+    sent = [];
+    closed = null;
+    send(message) { this.sent.push(JSON.parse(message)); }
+    close(code, reason) { this.closed = { code, reason }; this.emit("close"); }
+  }
+
+  const relays = {
+    first: { guildId: "guild-1", guildName: "Servidor", deviceId: "device-1", clientName: "PC Sala" },
+    second: { guildId: "guild-1", guildName: "Servidor", deviceId: "device-2", clientName: "Notebook" }
+  };
+  const hub = new AudioHub({ resolveAccessTokenFresh: async (token) => relays[token] });
+  const firstSocket = new Socket();
+  const secondSocket = new Socket();
+
+  assert.equal(await hub.acceptPublisher(firstSocket, "first"), true);
+  assert.equal(await hub.acceptPublisher(secondSocket, "second"), true);
+  assert.equal(hub.activePublisher("guild-1").clientName, "PC Sala");
+  assert.equal(secondSocket.sent[0].type, "busy");
+  assert.equal(secondSocket.sent[0].activeClientName, "PC Sala");
+  assert.equal(firstSocket.closed, null);
+  firstSocket.close();
 });
 
 test("audio hub can request a clean publisher reconnect", () => {

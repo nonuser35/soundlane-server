@@ -216,22 +216,46 @@ export class RelayStore {
       const accessToken = randomBytes(32).toString("base64url");
       const record = await this.withStateMutation(() => {
         const previous = this.state.guilds[guild.id];
-        const next = {
-          guildId: guild.id,
-          guildName: guild.name,
-          clientName: pairing.clientName,
+        const devices = { ...(previous?.devices ?? {}) };
+        if (previous?.accessTokenHash && previous.deviceId && !devices[previous.deviceId]) {
+          devices[previous.deviceId] = {
+            deviceId: previous.deviceId,
+            clientName: previous.clientName,
+            accessTokenHash: previous.accessTokenHash,
+            pairedByUserId: previous.pairedByUserId,
+            pairedByUserName: previous.pairedByUserName,
+            pairedAt: previous.pairedAt
+          };
+        }
+        const existingDevice = devices[pairing.deviceId];
+        devices[pairing.deviceId] = {
           deviceId: pairing.deviceId,
+          clientName: pairing.clientName,
           accessTokenHash: hashToken(accessToken),
-          listenerCode: previous?.listenerCode ?? randomCode(8),
-          voiceChannelId: previous?.voiceChannelId ?? null,
           pairedByUserId: user.id,
           pairedByUserName: user.username,
           pairedAt: new Date().toISOString()
         };
+        const next = {
+          ...previous,
+          guildId: guild.id,
+          guildName: guild.name,
+          listenerCode: previous?.listenerCode ?? randomCode(8),
+          voiceChannelId: previous?.voiceChannelId ?? null,
+          notificationChannelId: previous?.notificationChannelId ?? null,
+          devices
+        };
+        delete next.clientName;
+        delete next.deviceId;
+        delete next.accessTokenHash;
+        delete next.pairedByUserId;
+        delete next.pairedByUserName;
+        delete next.pairedAt;
         this.state.guilds[guild.id] = next;
         this.addAudit({
-          action: previous ? "pairing_replaced" : "pairing_added",
+          action: existingDevice ? "device_reconnected" : "device_added",
           guildId: guild.id,
+          deviceId: pairing.deviceId,
           userId: user.id,
           userName: user.username,
           clientName: pairing.clientName
@@ -314,15 +338,45 @@ export class RelayStore {
     });
   }
 
+  async setGuildNotificationChannel(guildId, notificationChannelId) {
+    return await this.withStateMutation(() => {
+      const guild = this.state.guilds[guildId];
+      if (!guild) return false;
+      guild.notificationChannelId = notificationChannelId;
+      return true;
+    });
+  }
+
   getGuild(guildId) {
     return this.state.guilds[guildId] ?? null;
   }
 
+  getGuildDevices(guildId) {
+    const guild = this.getGuild(guildId);
+    if (!guild) return [];
+    const devices = Object.values(guild.devices ?? {});
+    if (devices.length === 0 && guild.accessTokenHash) {
+      devices.push({
+        deviceId: guild.deviceId ?? "legacy",
+        clientName: guild.clientName ?? "Computador Windows",
+        accessTokenHash: guild.accessTokenHash,
+        pairedByUserName: guild.pairedByUserName,
+        pairedAt: guild.pairedAt
+      });
+    }
+    return devices;
+  }
+
   resolveAccessToken(token) {
     const tokenHash = hashToken(token);
-    return Object.values(this.state.guilds).find((guild) => guild.accessTokenHash === tokenHash)
-      ?? Object.values(this.state.extensions).find((extension) => extension.accessTokenHash === tokenHash)
-      ?? null;
+    for (const guild of Object.values(this.state.guilds)) {
+      if (guild.accessTokenHash === tokenHash) return guild;
+      const device = Object.values(guild.devices ?? {}).find(
+        (candidate) => candidate.accessTokenHash === tokenHash);
+      if (device) return { ...guild, ...device };
+    }
+    return Object.values(this.state.extensions).find(
+      (extension) => extension.accessTokenHash === tokenHash) ?? null;
   }
 
   async resolveAccessTokenFresh(token) {

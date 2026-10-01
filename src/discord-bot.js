@@ -12,7 +12,8 @@ import {
   Routes,
   SlashCommandBuilder,
   TextInputBuilder,
-  TextInputStyle
+  TextInputStyle,
+  escapeMarkdown
 } from "discord.js";
 import {
   AudioPlayerStatus,
@@ -38,9 +39,13 @@ export class DiscordRelayBot {
     this.publisherStreams = new Map();
     this.playerStates = new Map();
     this.voiceStates = new Map();
+    this.busyNotifications = new Map();
 
     audioHub.on("publisherStarted", (guildId, stream, codec) => this.attachPublisher(guildId, stream, codec));
     audioHub.on("publisherStopped", (guildId) => this.publisherStreams.delete(guildId));
+    audioHub.on("publisherRejected", (guildId, contender, active) => {
+      this.notifyJamBusy(guildId, contender, active).catch(console.error);
+    });
   }
 
   async start() {
@@ -91,9 +96,17 @@ export class DiscordRelayBot {
   statusFields(guildId) {
     const guild = this.store.getGuild(guildId);
     const connection = this.connections.get(guildId);
+    const devices = this.store.getGuildDevices(guildId);
+    const active = this.audioHub.activePublisher(guildId);
     return [
-      { name: "Aplicativo", value: guild ? `Conectado: ${guild.clientName}` : "Nao conectado", inline: true },
-      { name: "Transmissao", value: this.audioHub.isLive(guildId) ? "Ativa" : "Em espera", inline: true },
+      { name: "Computadores salvos", value: guild ? `${devices.length}` : "Nenhum", inline: true },
+      {
+        name: "Jam agora",
+        value: active
+          ? `**${escapeMarkdown(active.clientName)}**${active.pairedByUserName ? ` (${escapeMarkdown(active.pairedByUserName)})` : ""}`
+          : "Livre",
+        inline: true
+      },
       { name: "Canal", value: connection?.joinConfig.channelId ? `<#${connection.joinConfig.channelId}>` : "Fora do canal", inline: true },
       { name: "Extensao", value: `${this.audioHub.listenerCount(guildId)} ouvinte(s)`, inline: true }
     ];
@@ -124,15 +137,19 @@ export class DiscordRelayBot {
 
   connectionPanel(guildId) {
     const guild = this.store.getGuild(guildId);
+    const devices = this.store.getGuildDevices(guildId);
+    const deviceList = devices.slice(0, 10).map((device) =>
+      `• **${escapeMarkdown(device.clientName ?? "Computador Windows")}** — adicionado por ${escapeMarkdown(device.pairedByUserName ?? "membro")}`
+    ).join("\n");
     const description = guild
-      ? `Computador conectado: **${guild.clientName}**\nVinculado por **${guild.pairedByUserName}**.`
-      : "Nenhum programa esta conectado. Baixe o programa, gere um codigo e insira-o aqui.";
+      ? `${deviceList || "Nenhum computador salvo."}\n\nO primeiro que iniciar a transmissao assume a jam; os demais aguardam.`
+      : "Nenhum programa esta salvo. Baixe o programa, gere um codigo e insira-o aqui uma unica vez.";
     return {
       embeds: [new EmbedBuilder().setTitle("Conexao do programa").setDescription(description).setColor(0x10975b)],
       components: [
         new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("relay:add-code").setLabel("Adicionar ou trocar codigo").setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId("relay:remove-code").setLabel("Remover codigo").setStyle(ButtonStyle.Danger).setDisabled(!guild),
+          new ButtonBuilder().setCustomId("relay:add-code").setLabel("Adicionar computador").setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId("relay:remove-code").setLabel("Remover todos").setStyle(ButtonStyle.Danger).setDisabled(!guild),
           new ButtonBuilder().setCustomId("relay:main").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
         ),
         new ActionRowBuilder().addComponents(
@@ -159,7 +176,7 @@ export class DiscordRelayBot {
     return {
       embeds: [new EmbedBuilder()
         .setTitle("Ajuda")
-        .setDescription("`/join` entra no seu canal.\n`/leave` sai do canal.\n`/help` abre este painel.\n\nA conexao e os codigos ficam em **Gerenciar conexao**.")
+        .setDescription("`/join` entra no seu canal.\n`/leave` sai do canal.\n`/help` abre este painel.\n\nCada computador e adicionado apenas uma vez em **Gerenciar conexao**. O primeiro a transmitir assume a jam; os demais aguardam ate ela ficar livre.")
         .setColor(0x10975b)],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("relay:main").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
@@ -187,7 +204,7 @@ export class DiscordRelayBot {
     return {
       embeds: [new EmbedBuilder()
         .setTitle("Remover conexao?")
-        .setDescription("O computador atual perdera o acesso. Qualquer membro podera adicionar outro codigo depois.")
+        .setDescription("Todos os computadores salvos perderao o acesso. Qualquer membro podera adiciona-los novamente depois.")
         .setColor(0xc83f32)],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("relay:confirm-remove").setLabel("Salvar remocao").setStyle(ButtonStyle.Danger),
@@ -213,8 +230,11 @@ export class DiscordRelayBot {
     if (!record) {
       return interaction.editReply({ content: "Codigo invalido ou expirado. Gere outro no programa e tente novamente." });
     }
-    this.audioHub.disconnectGuild(interaction.guildId);
-    return interaction.editReply({ content: "Conexao salva.", ...this.mainPanel(interaction.guildId) });
+    await this.store.setGuildNotificationChannel(interaction.guildId, interaction.channelId);
+    return interaction.editReply({
+      content: `Computador salvo. Agora existem ${this.store.getGuildDevices(interaction.guildId).length} dispositivo(s) nesta jam.`,
+      ...this.mainPanel(interaction.guildId)
+    });
   }
 
   async removePairing(interaction) {
@@ -236,6 +256,13 @@ export class DiscordRelayBot {
       return interaction.isButton() ? interaction.reply({ ...ephemeral, ...payload }) : interaction.reply({ ...ephemeral, ...payload });
     }
     await interaction.deferReply(ephemeral);
+    const active = this.audioHub.activePublisher(interaction.guildId);
+    const currentChannelId = this.connections.get(interaction.guildId)?.joinConfig.channelId;
+    if (active && currentChannelId && currentChannelId !== channel.id) {
+      return interaction.editReply({
+        content: `A jam esta sendo usada por **${escapeMarkdown(active.clientName)}** em <#${currentChannelId}>. Aguarde a transmissao terminar.`
+      });
+    }
     const connection = this.createVoiceConnection(interaction.guild, channel.id);
     try {
       await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
@@ -246,6 +273,7 @@ export class DiscordRelayBot {
       return interaction.editReply({ content: "Nao consegui concluir a conexao de voz. Tente /join novamente." });
     }
     await this.store.setGuildVoiceChannel(interaction.guildId, channel.id);
+    await this.store.setGuildNotificationChannel(interaction.guildId, interaction.channelId);
     const player = this.getPlayer(interaction.guildId);
     connection.subscribe(player);
     if (player.state.status === AudioPlayerStatus.Idle && this.audioHub.isLive(interaction.guildId)) {
@@ -253,6 +281,25 @@ export class DiscordRelayBot {
     }
     const payload = this.mainPanel(interaction.guildId);
     return interaction.editReply(payload);
+  }
+
+  async notifyJamBusy(guildId, contender, active) {
+    const key = `${guildId}:${contender.deviceId ?? contender.clientName}`;
+    const now = Date.now();
+    if (now - (this.busyNotifications.get(key) ?? 0) < 15_000) return;
+    this.busyNotifications.set(key, now);
+
+    const guildRecord = this.store.getGuild(guildId);
+    const channelId = guildRecord?.notificationChannelId;
+    if (!channelId) return;
+    const channel = await this.client.channels.fetch(channelId).catch(() => null);
+    if (!channel?.isTextBased()) return;
+    const voiceChannelId = this.connections.get(guildId)?.joinConfig.channelId;
+    await channel.send(
+      `A jam${voiceChannelId ? ` em <#${voiceChannelId}>` : ""} ja esta sendo usada por **${escapeMarkdown(active.clientName ?? "outro participante")}**` +
+      `${active.pairedByUserName ? `, cadastrado por **${escapeMarkdown(active.pairedByUserName)}**` : ""}. ` +
+      `**${escapeMarkdown(contender.clientName ?? "Outro computador")}** tentou entrar e deve aguardar a transmissao terminar.`
+    );
   }
 
   async leave(interaction) {

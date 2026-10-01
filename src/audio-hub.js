@@ -41,10 +41,35 @@ export class AudioHub extends EventEmitter {
     if (!relay) return false;
     const relayKey = relay.guildId ?? relay.relayId;
 
-    this.publishers.get(relayKey)?.socket.close(4001, "Nova transmissao iniciada");
-    const session = { socket, relay, stream: null, codec: null };
+    const activeSession = this.publishers.get(relayKey);
+    const sameDevice = activeSession?.relay.deviceId && relay.deviceId &&
+      activeSession.relay.deviceId === relay.deviceId;
+    if (activeSession && !sameDevice) {
+      socket.send(JSON.stringify({
+        type: "busy",
+        activeClientName: activeSession.relay.clientName ?? "Outro participante",
+        activeSince: activeSession.startedAt
+      }));
+      if (relay.guildId) this.emit("publisherRejected", relay.guildId, relay, activeSession.relay);
+      const closeTimer = setTimeout(() => socket.close(4009, "Jam em uso"), 50);
+      closeTimer.unref();
+      return true;
+    }
+
+    if (activeSession) {
+      activeSession.replaced = true;
+      activeSession.socket.close(4002, "Reconectando o mesmo computador");
+    }
+    const session = {
+      socket,
+      relay,
+      stream: null,
+      codec: null,
+      startedAt: new Date().toISOString()
+    };
     this.publishers.set(relayKey, session);
-    console.log(`Transmissao iniciada para um servidor.`);
+    this.notifyJam(relayKey, session);
+    console.log("Transmissao iniciada para uma jam.");
 
     socket.on("message", (data, isBinary) => {
       if (!isBinary || data.length > 1024 * 1024) return;
@@ -80,15 +105,23 @@ export class AudioHub extends EventEmitter {
       }
     });
     socket.on("close", () => {
-      if (session.codec === "opus") session.stream?.endInput();
-      else session.stream?.end();
+      if (!session.replaced) {
+        if (session.codec === "opus") session.stream?.endInput();
+        else session.stream?.end();
+      }
       if (this.publishers.get(relayKey) === session) {
         this.publishers.delete(relayKey);
         if (relay.guildId) this.emit("publisherStopped", relay.guildId);
+        this.notifyJam(relayKey, null);
       }
-      console.log(`Transmissao encerrada para um servidor.`);
+      console.log("Transmissao encerrada para uma jam.");
     });
-    socket.send(JSON.stringify({ type: "ready", guildName: relay.guildName ?? relay.relayName }));
+    socket.send(JSON.stringify({
+      type: "ready",
+      guildName: relay.guildName ?? relay.relayName,
+      clientName: relay.clientName,
+      startedAt: session.startedAt
+    }));
     return true;
   }
 
@@ -111,7 +144,9 @@ export class AudioHub extends EventEmitter {
       type: "ready",
       guildName: relay.guildName ?? relay.relayName,
       live: this.publishers.has(relayKey),
-      codec: this.publishers.get(relayKey)?.codec ?? null
+      codec: this.publishers.get(relayKey)?.codec ?? null,
+      activeClientName: this.publishers.get(relayKey)?.relay.clientName ?? null,
+      activeSince: this.publishers.get(relayKey)?.startedAt ?? null
     }));
     return true;
   }
@@ -127,6 +162,29 @@ export class AudioHub extends EventEmitter {
     for (const listener of this.listeners.get(relayKey) ?? []) {
       if (listener.readyState === WebSocket.OPEN) listener.send(message);
     }
+  }
+
+  notifyJam(relayKey, session) {
+    const message = JSON.stringify({
+      type: "jam",
+      active: Boolean(session),
+      activeClientName: session?.relay.clientName ?? null,
+      activeSince: session?.startedAt ?? null
+    });
+    for (const listener of this.listeners.get(relayKey) ?? []) {
+      if (listener.readyState === WebSocket.OPEN) listener.send(message);
+    }
+  }
+
+  activePublisher(relayKey) {
+    const session = this.publishers.get(relayKey);
+    if (!session) return null;
+    return {
+      clientName: session.relay.clientName ?? "Computador Windows",
+      deviceId: session.relay.deviceId ?? null,
+      pairedByUserName: session.relay.pairedByUserName ?? null,
+      startedAt: session.startedAt
+    };
   }
 
   isLive(guildId) {
