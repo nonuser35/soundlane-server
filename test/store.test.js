@@ -18,6 +18,7 @@ test("pairing creates a reusable guild session without storing the raw token", a
 
     assert.ok(guild);
     assert.equal(store.getPairing(pairing.pairingId).status, "paired");
+    assert.equal(store.getPairing(pairing.pairingId).destinationType, "discord");
     assert.equal(store.resolveAccessToken(pairing.accessToken).guildId, "guild-1");
     assert.equal(store.resolveListenerCredential(guild.listenerCode).guildName, "Servidor");
     assert.equal(Object.hasOwn(store.getGuild("guild-1"), "accessToken"), false);
@@ -41,6 +42,7 @@ test("extension can redeem the desktop pairing code and revoke its connection", 
 
     assert.ok(extension.listenerToken);
     assert.equal(store.getPairing(pairing.pairingId).status, "paired");
+    assert.equal(store.getPairing(pairing.pairingId).destinationType, "extension");
     assert.equal(store.resolveAccessToken(pairing.accessToken).relayId, extension.relayId);
     assert.equal(store.resolveListenerCredential(extension.listenerToken).relayId, extension.relayId);
 

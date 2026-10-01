@@ -93,6 +93,7 @@ export class RelayStore {
     pairing.accessToken = accessToken;
     pairing.guildName = guild.name;
     pairing.discordUserName = user.username;
+    pairing.destinationType = "discord";
     await this.save();
     return record;
   }
@@ -121,6 +122,7 @@ export class RelayStore {
     pairing.status = "paired";
     pairing.accessToken = accessToken;
     pairing.guildName = record.relayName;
+    pairing.destinationType = "extension";
     await this.save();
     return { ...record, listenerToken };
   }

@@ -96,7 +96,8 @@ const server = createServer(async (request, response) => {
         status: pairing.status === "paired" ? "connected" : pairing.status,
         accessToken: pairing.accessToken ?? null,
         guildName: pairing.guildName ?? null,
-        discordUserName: pairing.discordUserName ?? null
+        discordUserName: pairing.discordUserName ?? null,
+        destinationType: pairing.destinationType ?? null
       });
     }
 
