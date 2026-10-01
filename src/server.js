@@ -68,6 +68,26 @@ const server = createServer(async (request, response) => {
       return json(response, 201, store.createPairing(body, inviteUrl));
     }
 
+    if (request.method === "POST" && url.pathname === "/api/v1/extensions/pair") {
+      const body = await readJson(request);
+      if (!body.code || !body.extensionId) return json(response, 400, { error: "Codigo e extensao obrigatorios" });
+      const pairing = await store.completeExtensionPairing(body.code, body.extensionId);
+      if (!pairing) return json(response, 404, { error: "Codigo invalido ou expirado" });
+      return json(response, 200, {
+        listenerToken: pairing.listenerToken,
+        relayName: pairing.relayName
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/v1/extensions/remove") {
+      const body = await readJson(request);
+      if (!body.listenerToken) return json(response, 400, { error: "Credencial obrigatoria" });
+      const removed = await store.removeExtension(body.listenerToken);
+      if (!removed) return json(response, 404, { error: "Conexao nao encontrada" });
+      audioHub.disconnectRelay(removed.relayId);
+      return json(response, 200, { removed: true });
+    }
+
     const pairingMatch = url.pathname.match(/^\/api\/v1\/pairings\/([a-f0-9-]+)$/i);
     if (request.method === "GET" && pairingMatch) {
       const pairing = store.getPairing(pairingMatch[1]);

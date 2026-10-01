@@ -19,13 +19,33 @@ test("pairing creates a reusable guild session without storing the raw token", a
     assert.ok(guild);
     assert.equal(store.getPairing(pairing.pairingId).status, "paired");
     assert.equal(store.resolveAccessToken(pairing.accessToken).guildId, "guild-1");
-    assert.equal(store.resolveListenerCode(guild.listenerCode).guildName, "Servidor");
+    assert.equal(store.resolveListenerCredential(guild.listenerCode).guildName, "Servidor");
     assert.equal(Object.hasOwn(store.getGuild("guild-1"), "accessToken"), false);
     assert.equal(store.state.audit[0].action, "pairing_added");
 
     await store.removeGuild("guild-1", { id: "user-2", username: "Outra pessoa" });
     assert.equal(store.state.audit[1].action, "pairing_removed");
     assert.equal(store.state.audit[1].userName, "Outra pessoa");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("extension can redeem the desktop pairing code and revoke its connection", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-extension-"));
+  try {
+    const store = new RelayStore(join(directory, "store.json"));
+    await store.load();
+    const pairing = store.createPairing({ clientName: "PC", deviceId: "device-1" }, null);
+    const extension = await store.completeExtensionPairing(pairing.code, "extension-1");
+
+    assert.ok(extension.listenerToken);
+    assert.equal(store.getPairing(pairing.pairingId).status, "paired");
+    assert.equal(store.resolveAccessToken(pairing.accessToken).relayId, extension.relayId);
+    assert.equal(store.resolveListenerCredential(extension.listenerToken).relayId, extension.relayId);
+
+    await store.removeExtension(extension.listenerToken);
+    assert.equal(store.resolveListenerCredential(extension.listenerToken), null);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -24,13 +24,14 @@ export class AudioHub extends EventEmitter {
   }
 
   acceptPublisher(socket, token) {
-    const guild = this.store.resolveAccessToken(token);
-    if (!guild) return false;
+    const relay = this.store.resolveAccessToken(token);
+    if (!relay) return false;
+    const relayKey = relay.guildId ?? relay.relayId;
 
-    this.publishers.get(guild.guildId)?.close(4001, "Nova transmissao iniciada");
-    this.publishers.set(guild.guildId, socket);
+    this.publishers.get(relayKey)?.close(4001, "Nova transmissao iniciada");
+    this.publishers.set(relayKey, socket);
     const discordPcm = new PassThrough({ highWaterMark: 38400 });
-    this.emit("publisherStarted", guild.guildId, discordPcm);
+    if (relay.guildId) this.emit("publisherStarted", relay.guildId, discordPcm);
     console.log(`Transmissao iniciada para um servidor.`);
 
     socket.on("message", (data, isBinary) => {
@@ -40,40 +41,41 @@ export class AudioHub extends EventEmitter {
       this.bytesReceived += frame.length;
       this.lastFrameAt = new Date().toISOString();
       discordPcm.write(float32ToPcm16(frame));
-      for (const listener of this.listeners.get(guild.guildId) ?? []) {
+      for (const listener of this.listeners.get(relayKey) ?? []) {
         if (listener.readyState === WebSocket.OPEN && listener.bufferedAmount < 512 * 1024) {
           listener.send(frame, { binary: true });
         }
       }
     });
     socket.on("close", () => {
-      if (this.publishers.get(guild.guildId) === socket) this.publishers.delete(guild.guildId);
+      if (this.publishers.get(relayKey) === socket) this.publishers.delete(relayKey);
       discordPcm.end();
-      this.emit("publisherStopped", guild.guildId);
+      if (relay.guildId) this.emit("publisherStopped", relay.guildId);
       console.log(`Transmissao encerrada para um servidor.`);
     });
-    socket.send(JSON.stringify({ type: "ready", guildName: guild.guildName }));
+    socket.send(JSON.stringify({ type: "ready", guildName: relay.guildName ?? relay.relayName }));
     return true;
   }
 
   acceptListener(socket, code) {
-    const guild = this.store.resolveListenerCode(code);
-    if (!guild) return false;
+    const relay = this.store.resolveListenerCredential(code);
+    if (!relay) return false;
+    const relayKey = relay.guildId ?? relay.relayId;
 
-    let listeners = this.listeners.get(guild.guildId);
+    let listeners = this.listeners.get(relayKey);
     if (!listeners) {
       listeners = new Set();
-      this.listeners.set(guild.guildId, listeners);
+      this.listeners.set(relayKey, listeners);
     }
     listeners.add(socket);
     socket.on("close", () => {
       listeners.delete(socket);
-      if (listeners.size === 0) this.listeners.delete(guild.guildId);
+      if (listeners.size === 0) this.listeners.delete(relayKey);
     });
     socket.send(JSON.stringify({
       type: "ready",
-      guildName: guild.guildName,
-      live: this.publishers.has(guild.guildId)
+      guildName: relay.guildName ?? relay.relayName,
+      live: this.publishers.has(relayKey)
     }));
     return true;
   }
@@ -100,6 +102,13 @@ export class AudioHub extends EventEmitter {
     this.publishers.get(guildId)?.close(4001, "Conexao substituida ou removida");
     for (const listener of this.listeners.get(guildId) ?? []) {
       listener.close(4001, "Sessao encerrada");
+    }
+  }
+
+  disconnectRelay(relayId) {
+    this.publishers.get(relayId)?.close(4001, "Conexao removida");
+    for (const listener of this.listeners.get(relayId) ?? []) {
+      listener.close(4001, "Conexao removida");
     }
   }
 }

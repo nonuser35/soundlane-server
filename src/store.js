@@ -17,7 +17,7 @@ function hashToken(token) {
 export class RelayStore {
   constructor(filePath) {
     this.filePath = filePath;
-    this.state = { guilds: {}, audit: [] };
+    this.state = { guilds: {}, extensions: {}, audit: [] };
     this.pairings = new Map();
   }
 
@@ -25,6 +25,7 @@ export class RelayStore {
     try {
       this.state = JSON.parse(await readFile(this.filePath, "utf8"));
       this.state.guilds ??= {};
+      this.state.extensions ??= {};
       this.state.audit ??= [];
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
@@ -96,6 +97,34 @@ export class RelayStore {
     return record;
   }
 
+  async completeExtensionPairing(code, extensionId) {
+    this.prunePairings();
+    const pairing = [...this.pairings.values()].find(
+      (item) => item.status === "pending" && item.code === code.trim().toUpperCase());
+    if (!pairing) return null;
+
+    const accessToken = randomBytes(32).toString("base64url");
+    const listenerToken = randomBytes(32).toString("base64url");
+    const relayId = randomUUID();
+    const record = {
+      relayId,
+      relayName: "Extensao do navegador",
+      clientName: pairing.clientName,
+      deviceId: pairing.deviceId,
+      extensionId,
+      accessTokenHash: hashToken(accessToken),
+      listenerTokenHash: hashToken(listenerToken),
+      pairedAt: new Date().toISOString()
+    };
+    this.state.extensions[relayId] = record;
+    this.addAudit({ action: "extension_pairing_added", relayId, clientName: pairing.clientName });
+    pairing.status = "paired";
+    pairing.accessToken = accessToken;
+    pairing.guildName = record.relayName;
+    await this.save();
+    return { ...record, listenerToken };
+  }
+
   async removeGuild(guildId, user) {
     if (!this.state.guilds[guildId]) return false;
     const previous = this.state.guilds[guildId];
@@ -117,12 +146,28 @@ export class RelayStore {
 
   resolveAccessToken(token) {
     const tokenHash = hashToken(token);
-    return Object.values(this.state.guilds).find((guild) => guild.accessTokenHash === tokenHash) ?? null;
+    return Object.values(this.state.guilds).find((guild) => guild.accessTokenHash === tokenHash)
+      ?? Object.values(this.state.extensions).find((extension) => extension.accessTokenHash === tokenHash)
+      ?? null;
   }
 
-  resolveListenerCode(code) {
-    const normalized = code.trim().toUpperCase();
-    return Object.values(this.state.guilds).find((guild) => guild.listenerCode === normalized) ?? null;
+  resolveListenerCredential(credential) {
+    const normalized = credential.trim();
+    const legacyGuild = Object.values(this.state.guilds).find(
+      (guild) => guild.listenerCode === normalized.toUpperCase());
+    if (legacyGuild) return legacyGuild;
+    const tokenHash = hashToken(normalized);
+    return Object.values(this.state.extensions).find(
+      (extension) => extension.listenerTokenHash === tokenHash) ?? null;
+  }
+
+  async removeExtension(listenerToken) {
+    const record = this.resolveListenerCredential(listenerToken);
+    if (!record?.relayId || !this.state.extensions[record.relayId]) return null;
+    delete this.state.extensions[record.relayId];
+    this.addAudit({ action: "extension_pairing_removed", relayId: record.relayId });
+    await this.save();
+    return record;
   }
 
   addAudit(entry) {
