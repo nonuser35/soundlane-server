@@ -36,11 +36,7 @@ export class RelayStore {
 
   async load() {
     if (this.redis) {
-      const storedState = await this.redis.get(this.redisKey);
-      if (storedState) {
-        this.state = typeof storedState === "string" ? JSON.parse(storedState) : storedState;
-      }
-      this.normalizeState();
+      await this.refreshRemoteState();
       this.keepAliveTimer = setInterval(() => {
         this.redis.get(this.redisKey).catch((error) => {
           console.error("Falha no keep-alive do Upstash:", error);
@@ -77,6 +73,15 @@ export class RelayStore {
     this.state.audit ??= [];
   }
 
+  async refreshRemoteState() {
+    if (!this.redis) return;
+    const storedState = await this.redis.get(this.redisKey);
+    this.state = storedState
+      ? (typeof storedState === "string" ? JSON.parse(storedState) : storedState)
+      : { guilds: {}, extensions: {}, audit: [] };
+    this.normalizeState();
+  }
+
   createPairing(client, inviteUrl) {
     this.prunePairings();
     let code;
@@ -105,6 +110,8 @@ export class RelayStore {
     const pairing = [...this.pairings.values()].find(
       (item) => item.status === "pending" && item.code === code.trim().toUpperCase());
     if (!pairing) return null;
+
+    await this.refreshRemoteState();
 
     const accessToken = randomBytes(32).toString("base64url");
     const previous = this.state.guilds[guild.id];
@@ -142,6 +149,8 @@ export class RelayStore {
       (item) => item.status === "pending" && item.code === code.trim().toUpperCase());
     if (!pairing) return null;
 
+    await this.refreshRemoteState();
+
     const accessToken = randomBytes(32).toString("base64url");
     const listenerToken = randomBytes(32).toString("base64url");
     const relayId = randomUUID();
@@ -166,6 +175,7 @@ export class RelayStore {
   }
 
   async removeGuild(guildId, user) {
+    await this.refreshRemoteState();
     if (!this.state.guilds[guildId]) return false;
     const previous = this.state.guilds[guildId];
     delete this.state.guilds[guildId];
@@ -191,6 +201,11 @@ export class RelayStore {
       ?? null;
   }
 
+  async resolveAccessTokenFresh(token) {
+    await this.refreshRemoteState();
+    return this.resolveAccessToken(token);
+  }
+
   resolveListenerCredential(credential) {
     const normalized = credential.trim();
     const legacyGuild = Object.values(this.state.guilds).find(
@@ -201,7 +216,13 @@ export class RelayStore {
       (extension) => extension.listenerTokenHash === tokenHash) ?? null;
   }
 
+  async resolveListenerCredentialFresh(credential) {
+    await this.refreshRemoteState();
+    return this.resolveListenerCredential(credential);
+  }
+
   async removeExtension(listenerToken) {
+    await this.refreshRemoteState();
     const record = this.resolveListenerCredential(listenerToken);
     if (!record?.relayId || !this.state.extensions[record.relayId]) return null;
     delete this.state.extensions[record.relayId];

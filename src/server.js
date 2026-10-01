@@ -111,13 +111,18 @@ const server = createServer(async (request, response) => {
 const websocketServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url, config.publicBaseUrl);
-  websocketServer.handleUpgrade(request, socket, head, (websocket) => {
-    const accepted = url.pathname === "/api/v1/stream"
-      ? audioHub.acceptPublisher(websocket, url.searchParams.get("access_token") || "")
-      : url.pathname === "/api/v1/listen"
-        ? audioHub.acceptListener(websocket, url.searchParams.get("code") || "")
-        : false;
-    if (!accepted) websocket.close(4003, "Credencial invalida");
+  websocketServer.handleUpgrade(request, socket, head, async (websocket) => {
+    try {
+      const accepted = url.pathname === "/api/v1/stream"
+        ? await audioHub.acceptPublisher(websocket, url.searchParams.get("access_token") || "")
+        : url.pathname === "/api/v1/listen"
+          ? await audioHub.acceptListener(websocket, url.searchParams.get("code") || "")
+          : false;
+      if (!accepted) websocket.close(4003, "Credencial invalida");
+    } catch (error) {
+      console.error("Falha ao validar credencial no Upstash:", error);
+      websocket.close(1011, "Persistencia temporariamente indisponivel");
+    }
   });
 });
 

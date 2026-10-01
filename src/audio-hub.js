@@ -23,8 +23,8 @@ export class AudioHub extends EventEmitter {
     this.lastFrameAt = null;
   }
 
-  acceptPublisher(socket, token) {
-    const relay = this.store.resolveAccessToken(token);
+  async acceptPublisher(socket, token) {
+    const relay = await this.store.resolveAccessTokenFresh(token);
     if (!relay) return false;
     const relayKey = relay.guildId ?? relay.relayId;
 
@@ -57,8 +57,8 @@ export class AudioHub extends EventEmitter {
     return true;
   }
 
-  acceptListener(socket, code) {
-    const relay = this.store.resolveListenerCredential(code);
+  async acceptListener(socket, code) {
+    const relay = await this.store.resolveListenerCredentialFresh(code);
     if (!relay) return false;
     const relayKey = relay.guildId ?? relay.relayId;
 
