@@ -109,6 +109,17 @@ const server = createServer(async (request, response) => {
 });
 
 const websocketServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+const websocketHeartbeat = setInterval(() => {
+  for (const websocket of websocketServer.clients) {
+    if (websocket.isAlive === false) {
+      websocket.terminate();
+      continue;
+    }
+    websocket.isAlive = false;
+    websocket.ping();
+  }
+}, 25_000);
+websocketHeartbeat.unref();
 
 function waitForWebSocketAuth(websocket) {
   return new Promise((resolveAuth) => {
@@ -144,6 +155,8 @@ server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url, config.publicBaseUrl);
   websocketServer.handleUpgrade(request, socket, head, async (websocket) => {
     try {
+      websocket.isAlive = true;
+      websocket.on("pong", () => { websocket.isAlive = true; });
       const legacyCredential = url.pathname === "/api/v1/stream"
         ? url.searchParams.get("access_token")
         : url.searchParams.get("code");
@@ -161,6 +174,8 @@ server.on("upgrade", (request, socket, head) => {
     }
   });
 });
+
+server.on("close", () => clearInterval(websocketHeartbeat));
 
 server.listen(config.port, "0.0.0.0", () => {
   console.log(`HTTP e WebSocket escutando na porta ${config.port}`);
