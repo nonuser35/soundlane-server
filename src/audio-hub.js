@@ -48,9 +48,11 @@ export class AudioHub extends EventEmitter {
       }
     });
     socket.on("close", () => {
-      if (this.publishers.get(relayKey) === socket) this.publishers.delete(relayKey);
       discordPcm.end();
-      if (relay.guildId) this.emit("publisherStopped", relay.guildId);
+      if (this.publishers.get(relayKey) === socket) {
+        this.publishers.delete(relayKey);
+        if (relay.guildId) this.emit("publisherStopped", relay.guildId);
+      }
       console.log(`Transmissao encerrada para um servidor.`);
     });
     socket.send(JSON.stringify({ type: "ready", guildName: relay.guildName ?? relay.relayName }));
@@ -82,6 +84,13 @@ export class AudioHub extends EventEmitter {
 
   isLive(guildId) {
     return this.publishers.has(guildId);
+  }
+
+  requestPublisherReconnect(relayKey) {
+    const socket = this.publishers.get(relayKey);
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.close(4002, "Reiniciando fluxo de audio");
+    return true;
   }
 
   listenerCount(guildId) {

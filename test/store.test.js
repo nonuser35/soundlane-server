@@ -62,6 +62,19 @@ test("float PCM is clamped and converted to signed 16-bit", () => {
   );
 });
 
+test("audio hub can request a clean publisher reconnect", () => {
+  const hub = new AudioHub(new RelayStore("unused.json"));
+  const calls = [];
+  hub.publishers.set("guild-1", {
+    readyState: 1,
+    close: (code, reason) => calls.push({ code, reason })
+  });
+
+  assert.equal(hub.requestPublisherReconnect("guild-1"), true);
+  assert.deepEqual(calls, [{ code: 4002, reason: "Reiniciando fluxo de audio" }]);
+  assert.equal(hub.requestPublisherReconnect("missing"), false);
+});
+
 test("Discord panel exposes the agreed actions", () => {
   const store = new RelayStore("unused.json");
   const bot = new DiscordRelayBot(

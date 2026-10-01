@@ -258,6 +258,9 @@ export class DiscordRelayBot {
     }
     const player = this.getPlayer(interaction.guildId);
     connection.subscribe(player);
+    if (player.state.status === AudioPlayerStatus.Idle && this.audioHub.isLive(interaction.guildId)) {
+      this.audioHub.requestPublisherReconnect(interaction.guildId);
+    }
     const payload = this.mainPanel(interaction.guildId);
     return interaction.editReply(payload);
   }
@@ -272,11 +275,22 @@ export class DiscordRelayBot {
   getPlayer(guildId) {
     let player = this.players.get(guildId);
     if (!player) {
-      player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+      player = createAudioPlayer({
+        behaviors: {
+          noSubscriber: NoSubscriberBehavior.Play,
+          maxMissedFrames: 100
+        }
+      });
       player.on("error", (error) => console.error(`Audio ${guildId}:`, error));
-      player.on("stateChange", (_, state) => {
+      player.on("stateChange", (previousState, state) => {
         this.playerStates.set(guildId, state.status);
         console.log(`Player de audio: ${state.status}`);
+        if (previousState.status !== AudioPlayerStatus.Idle &&
+            state.status === AudioPlayerStatus.Idle &&
+            this.audioHub.isLive(guildId)) {
+          console.warn(`Player ${guildId} ficou ocioso; solicitando reconexao do fluxo.`);
+          this.audioHub.requestPublisherReconnect(guildId);
+        }
       });
       this.players.set(guildId, player);
     }
