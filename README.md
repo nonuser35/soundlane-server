@@ -52,6 +52,14 @@ npm test
 | `DOWNLOAD_URL` | No | Desktop app download page shown by the bot. |
 | `PORT` | No | HTTP port. Defaults to `8080`. |
 | `DATA_DIR` | No | Persistent state directory. Defaults to `./data`. |
+| `UPSTASH_REDIS_REST_URL` | No | Upstash REST endpoint for durable pairing storage. |
+| `UPSTASH_REDIS_REST_TOKEN` | No | Matching Upstash REST token. |
+| `UPSTASH_REDIS_KEY` | No | State key. Defaults to `soundlane:relay-state:v1`. |
+
+When both Upstash variables are present, Redis is the source of truth and local
+file storage is not used. Startup fails if only one credential is configured or
+if the remote state cannot be read, preventing an empty state from replacing
+existing pairings.
 
 ## HTTP and WebSocket endpoints
 

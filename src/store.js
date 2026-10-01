@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { Redis } from "@upstash/redis";
 
 const PAIRING_LIFETIME_MS = 10 * 60 * 1000;
 
@@ -19,24 +20,61 @@ export class RelayStore {
     this.filePath = filePath;
     this.state = { guilds: {}, extensions: {}, audit: [] };
     this.pairings = new Map();
+    this.redis = null;
+    this.redisKey = process.env.UPSTASH_REDIS_KEY || "soundlane:relay-state:v1";
+    this.keepAliveTimer = null;
+
+    const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (Boolean(redisUrl) !== Boolean(redisToken)) {
+      throw new Error("Configure UPSTASH_REDIS_REST_URL e UPSTASH_REDIS_REST_TOKEN juntos.");
+    }
+    if (redisUrl && redisToken) {
+      this.redis = new Redis({ url: redisUrl, token: redisToken });
+    }
   }
 
   async load() {
+    if (this.redis) {
+      const storedState = await this.redis.get(this.redisKey);
+      if (storedState) {
+        this.state = typeof storedState === "string" ? JSON.parse(storedState) : storedState;
+      }
+      this.normalizeState();
+      this.keepAliveTimer = setInterval(() => {
+        this.redis.get(this.redisKey).catch((error) => {
+          console.error("Falha no keep-alive do Upstash:", error);
+        });
+      }, 24 * 60 * 60 * 1000);
+      this.keepAliveTimer.unref();
+      console.log("Estado persistente carregado do Upstash.");
+      return;
+    }
+
     try {
       this.state = JSON.parse(await readFile(this.filePath, "utf8"));
-      this.state.guilds ??= {};
-      this.state.extensions ??= {};
-      this.state.audit ??= [];
+      this.normalizeState();
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
   }
 
   async save() {
+    if (this.redis) {
+      await this.redis.set(this.redisKey, JSON.stringify(this.state));
+      return;
+    }
+
     await mkdir(dirname(this.filePath), { recursive: true });
     const temporaryPath = `${this.filePath}.tmp`;
     await writeFile(temporaryPath, JSON.stringify(this.state, null, 2));
     await rename(temporaryPath, this.filePath);
+  }
+
+  normalizeState() {
+    this.state.guilds ??= {};
+    this.state.extensions ??= {};
+    this.state.audit ??= [];
   }
 
   createPairing(client, inviteUrl) {
