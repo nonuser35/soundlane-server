@@ -1,10 +1,8 @@
 import { Readable } from "node:stream";
 
-const SILENCE_PACKET = Buffer.from([0xf8, 0xff, 0xfe]);
-
 export class OpusJitterStream extends Readable {
   constructor({ targetPackets = 6, maxPackets = 30 } = {}) {
-    super({ objectMode: false, highWaterMark: 64 * 1024 });
+    super({ objectMode: true, highWaterMark: targetPackets });
     this.targetPackets = targetPackets;
     this.maxPackets = maxPackets;
     this.queue = [];
@@ -12,10 +10,8 @@ export class OpusJitterStream extends Readable {
     this.ended = false;
     this.backpressured = false;
     this.expectedSequence = null;
-    this.underruns = 0;
     this.droppedPackets = 0;
     this.lostPackets = 0;
-    this.timer = null;
   }
 
   addPacket(sequence, payload) {
@@ -25,51 +21,42 @@ export class OpusJitterStream extends Readable {
       this.lostPackets += sequence - this.expectedSequence;
     }
     this.expectedSequence = sequence + 1;
-    this.queue.push(Buffer.from(payload));
-
-    if (this.queue.length > this.maxPackets) {
-      const dropCount = this.queue.length - this.targetPackets;
-      this.queue.splice(0, dropCount);
-      this.droppedPackets += dropCount;
+    if (this.readableLength + this.queue.length >= this.maxPackets) {
+      if (this.queue.length > 0) this.queue.shift();
+      else {
+        this.droppedPackets += 1;
+        return;
+      }
+      this.droppedPackets += 1;
     }
+    this.queue.push(Buffer.from(payload));
 
     if (!this.started && this.queue.length >= this.targetPackets) {
       this.started = true;
-      this.timer = setInterval(() => this.tick(), 20);
-      this.timer.unref();
-      this.tick();
+      this.flushQueue();
+    } else if (this.started) {
+      this.flushQueue();
     }
   }
 
-  tick() {
-    if (this.destroyed || this.backpressured) return;
-    if (this.ended && this.queue.length === 0) {
-      this.stopTimer();
-      this.push(null);
-      return;
+  flushQueue() {
+    if (this.destroyed || this.backpressured || !this.started) return;
+    while (this.queue.length > 0 && !this.backpressured) {
+      this.backpressured = !this.push(this.queue.shift());
     }
-
-    let packet = this.queue.shift();
-    if (!packet) {
-      packet = SILENCE_PACKET;
-      this.underruns += 1;
-    }
-    this.backpressured = !this.push(packet);
+    if (this.ended && this.queue.length === 0) this.push(null);
   }
 
   endInput() {
     this.ended = true;
-    if (!this.started || this.queue.length === 0) {
-      this.stopTimer();
-      this.push(null);
-    }
+    this.started = true;
+    this.flushQueue();
   }
 
   diagnostics() {
     return {
-      queuedPackets: this.queue.length,
-      bufferedMs: this.queue.length * 20,
-      underruns: this.underruns,
+      queuedPackets: this.readableLength + this.queue.length,
+      bufferedMs: (this.readableLength + this.queue.length) * 20,
       droppedPackets: this.droppedPackets,
       lostPackets: this.lostPackets
     };
@@ -77,16 +64,11 @@ export class OpusJitterStream extends Readable {
 
   _read() {
     this.backpressured = false;
+    this.flushQueue();
   }
 
   _destroy(error, callback) {
-    this.stopTimer();
     callback(error);
-  }
-
-  stopTimer() {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
   }
 }
 

@@ -103,6 +103,18 @@ test("Opus jitter buffer bounds its queue and records dropped packets", () => {
   stream.destroy();
 });
 
+test("Opus jitter buffer preserves packet boundaries during bursty input", () => {
+  const stream = new OpusJitterStream({ targetPackets: 3, maxPackets: 10 });
+  stream.addPacket(0, Buffer.from([10]));
+  stream.addPacket(1, Buffer.from([11]));
+  assert.equal(stream.read(), null);
+  stream.addPacket(2, Buffer.from([12]));
+  assert.deepEqual([...stream.read()], [10]);
+  assert.deepEqual([...stream.read()], [11]);
+  assert.deepEqual([...stream.read()], [12]);
+  stream.destroy();
+});
+
 test("audio hub identifies protocol v2 as Opus before starting Discord playback", async () => {
   class Socket extends EventEmitter {
     readyState = 1;
