@@ -65,7 +65,7 @@ const server = createServer(async (request, response) => {
       const inviteUrl = config.discordClientId
         ? `https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(config.discordClientId)}&scope=bot%20applications.commands&permissions=3145728`
         : null;
-      return json(response, 201, store.createPairing(body, inviteUrl));
+      return json(response, 201, await store.createPairing(body, inviteUrl));
     }
 
     if (request.method === "POST" && url.pathname === "/api/v1/extensions/pair") {
@@ -90,7 +90,7 @@ const server = createServer(async (request, response) => {
 
     const pairingMatch = url.pathname.match(/^\/api\/v1\/pairings\/([a-f0-9-]+)$/i);
     if (request.method === "GET" && pairingMatch) {
-      const pairing = store.getPairing(pairingMatch[1]);
+      const pairing = await store.getPairing(pairingMatch[1]);
       if (!pairing) return json(response, 404, { error: "Pareamento nao encontrado" });
       return json(response, 200, {
         status: pairing.status === "paired" ? "connected" : pairing.status,
@@ -109,14 +109,50 @@ const server = createServer(async (request, response) => {
 });
 
 const websocketServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+
+function waitForWebSocketAuth(websocket) {
+  return new Promise((resolveAuth) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolveAuth(null);
+    }, 8_000);
+    const onMessage = (data, isBinary) => {
+      cleanup();
+      if (isBinary || data.length > 4_096) return resolveAuth(null);
+      try {
+        const message = JSON.parse(data.toString("utf8"));
+        resolveAuth(message.type === "auth" ? message : null);
+      } catch {
+        resolveAuth(null);
+      }
+    };
+    const onClose = () => {
+      cleanup();
+      resolveAuth(null);
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      websocket.off("message", onMessage);
+      websocket.off("close", onClose);
+    };
+    websocket.once("message", onMessage);
+    websocket.once("close", onClose);
+  });
+}
+
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url, config.publicBaseUrl);
   websocketServer.handleUpgrade(request, socket, head, async (websocket) => {
     try {
+      const legacyCredential = url.pathname === "/api/v1/stream"
+        ? url.searchParams.get("access_token")
+        : url.searchParams.get("code");
+      const auth = legacyCredential ? null : await waitForWebSocketAuth(websocket);
+      const credential = legacyCredential || auth?.credential || "";
       const accepted = url.pathname === "/api/v1/stream"
-        ? await audioHub.acceptPublisher(websocket, url.searchParams.get("access_token") || "")
+        ? await audioHub.acceptPublisher(websocket, credential)
         : url.pathname === "/api/v1/listen"
-          ? await audioHub.acceptListener(websocket, url.searchParams.get("code") || "")
+          ? await audioHub.acceptListener(websocket, credential)
           : false;
       if (!accepted) websocket.close(4003, "Credencial invalida");
     } catch (error) {

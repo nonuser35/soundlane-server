@@ -39,7 +39,7 @@ export class DiscordRelayBot {
     this.playerStates = new Map();
     this.voiceStates = new Map();
 
-    audioHub.on("publisherStarted", (guildId, stream) => this.attachPublisher(guildId, stream));
+    audioHub.on("publisherStarted", (guildId, stream, codec) => this.attachPublisher(guildId, stream, codec));
     audioHub.on("publisherStopped", (guildId) => this.publisherStreams.delete(guildId));
   }
 
@@ -47,6 +47,7 @@ export class DiscordRelayBot {
     await this.registerCommands();
     this.client.on(Events.InteractionCreate, (interaction) => this.handleInteraction(interaction).catch(console.error));
     await this.client.login(this.config.discordToken);
+    await this.restoreVoiceConnections();
   }
 
   async registerCommands() {
@@ -235,19 +236,7 @@ export class DiscordRelayBot {
       return interaction.isButton() ? interaction.reply({ ...ephemeral, ...payload }) : interaction.reply({ ...ephemeral, ...payload });
     }
     await interaction.deferReply(ephemeral);
-    const previousConnection = this.connections.get(interaction.guildId);
-    previousConnection?.destroy();
-    const connection = joinVoiceChannel({
-      channelId: channel.id,
-      guildId: interaction.guildId,
-      adapterCreator: interaction.guild.voiceAdapterCreator,
-      selfDeaf: true
-    });
-    this.connections.set(interaction.guildId, connection);
-    connection.on("stateChange", (_, state) => {
-      this.voiceStates.set(interaction.guildId, state.status);
-      console.log(`Conexao de voz: ${state.status}`);
-    });
+    const connection = this.createVoiceConnection(interaction.guild, channel.id);
     try {
       await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
     } catch (error) {
@@ -256,6 +245,7 @@ export class DiscordRelayBot {
       console.error("Falha ao conectar ao canal de voz:", error);
       return interaction.editReply({ content: "Nao consegui concluir a conexao de voz. Tente /join novamente." });
     }
+    await this.store.setGuildVoiceChannel(interaction.guildId, channel.id);
     const player = this.getPlayer(interaction.guildId);
     connection.subscribe(player);
     if (player.state.status === AudioPlayerStatus.Idle && this.audioHub.isLive(interaction.guildId)) {
@@ -268,8 +258,45 @@ export class DiscordRelayBot {
   async leave(interaction) {
     this.connections.get(interaction.guildId)?.destroy();
     this.connections.delete(interaction.guildId);
+    await this.store.setGuildVoiceChannel(interaction.guildId, null);
     const payload = this.mainPanel(interaction.guildId);
     return interaction.isButton() ? interaction.update(payload) : interaction.reply({ ...ephemeral, ...payload });
+  }
+
+  async restoreVoiceConnections() {
+    for (const guildRecord of Object.values(this.store.state.guilds)) {
+      if (!guildRecord.voiceChannelId) continue;
+      const guild = this.client.guilds.cache.get(guildRecord.guildId);
+      const channel = guild?.channels.cache.get(guildRecord.voiceChannelId);
+      if (!guild || !channel?.isVoiceBased()) continue;
+      try {
+        const connection = this.createVoiceConnection(guild, channel.id);
+        await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+        connection.subscribe(this.getPlayer(guild.id));
+        console.log(`Conexao de voz restaurada para ${guild.name}.`);
+      } catch (error) {
+        console.error(`Falha ao restaurar voz em ${guildRecord.guildId}:`, error);
+      }
+    }
+  }
+
+  createVoiceConnection(guild, channelId) {
+    this.connections.get(guild.id)?.destroy();
+    const connection = joinVoiceChannel({
+      channelId,
+      guildId: guild.id,
+      adapterCreator: guild.voiceAdapterCreator,
+      selfDeaf: true
+    });
+    this.connections.set(guild.id, connection);
+    connection.on("stateChange", (_, state) => {
+      this.voiceStates.set(guild.id, state.status);
+      console.log(`Conexao de voz: ${state.status}`);
+      if (state.status === VoiceConnectionStatus.Destroyed && this.connections.get(guild.id) === connection) {
+        this.connections.delete(guild.id);
+      }
+    });
+    return connection;
   }
 
   getPlayer(guildId) {
@@ -297,10 +324,12 @@ export class DiscordRelayBot {
     return player;
   }
 
-  attachPublisher(guildId, stream) {
+  attachPublisher(guildId, stream, codec = "pcm-f32") {
     this.publisherStreams.set(guildId, stream);
     const player = this.getPlayer(guildId);
-    const resource = createAudioResource(stream, { inputType: StreamType.Raw });
+    const resource = createAudioResource(stream, {
+      inputType: codec === "opus" ? StreamType.Opus : StreamType.Raw
+    });
     player.play(resource);
     if (player.state.status === AudioPlayerStatus.Idle) console.warn(`Player ${guildId} permaneceu ocioso.`);
   }
