@@ -197,12 +197,23 @@ export class DiscordRelayBot {
 
   async savePairing(interaction) {
     const code = interaction.fields.getTextInputValue("code");
-    const record = await this.store.completePairing(code, interaction.guild, interaction.user);
+    await interaction.deferReply(ephemeral);
+
+    let record;
+    try {
+      record = await this.store.completePairing(code, interaction.guild, interaction.user);
+    } catch (error) {
+      console.error("Falha ao salvar pareamento:", error);
+      return interaction.editReply({
+        content: "Nao foi possivel consultar o armazenamento agora. Tente novamente em alguns instantes."
+      });
+    }
+
     if (!record) {
-      return interaction.reply({ ...ephemeral, content: "Codigo invalido ou expirado. Gere outro no programa e tente novamente." });
+      return interaction.editReply({ content: "Codigo invalido ou expirado. Gere outro no programa e tente novamente." });
     }
     this.audioHub.disconnectGuild(interaction.guildId);
-    return interaction.reply({ ...ephemeral, content: "Conexao salva.", ...this.mainPanel(interaction.guildId) });
+    return interaction.editReply({ content: "Conexao salva.", ...this.mainPanel(interaction.guildId) });
   }
 
   async removePairing(interaction) {
