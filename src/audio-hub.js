@@ -41,22 +41,45 @@ export class AudioHub extends EventEmitter {
     if (!relay) return false;
     const relayKey = relay.guildId ?? relay.relayId;
 
+    let guildDelegation = null;
+    if (relay.guildId) {
+      guildDelegation = relay.delegation ?? null;
+      if (!guildDelegation) guildDelegation = await this.store.claimDelegation(relay.guildId, relay);
+      if (!guildDelegation || guildDelegation.deviceId !== relay.deviceId) {
+        const activeName = guildDelegation?.clientName ?? guildDelegation?.userName ?? "Outro participante";
+        socket.send(JSON.stringify({
+          type: "busy",
+          activeClientName: activeName,
+          activeSince: guildDelegation?.grantedAt ?? null
+        }));
+        this.emit("publisherRejected", relay.guildId, relay, guildDelegation ?? {});
+        const closeTimer = setTimeout(() => socket.close(4009, "Jam em uso"), 50);
+        closeTimer.unref();
+        return true;
+      }
+    }
+
     const activeSession = this.publishers.get(relayKey);
     const sameDevice = activeSession?.relay.deviceId && relay.deviceId &&
       activeSession.relay.deviceId === relay.deviceId;
     if (activeSession && !sameDevice) {
-      socket.send(JSON.stringify({
-        type: "busy",
-        activeClientName: activeSession.relay.clientName ?? "Outro participante",
-        activeSince: activeSession.startedAt
-      }));
-      if (relay.guildId) this.emit("publisherRejected", relay.guildId, relay, activeSession.relay);
-      const closeTimer = setTimeout(() => socket.close(4009, "Jam em uso"), 50);
-      closeTimer.unref();
-      return true;
+      if (guildDelegation?.deviceId === relay.deviceId) {
+        activeSession.replaced = true;
+        activeSession.socket.close(4001, "Delegacao transferida");
+      } else {
+        socket.send(JSON.stringify({
+          type: "busy",
+          activeClientName: activeSession.relay.clientName ?? "Outro participante",
+          activeSince: activeSession.startedAt
+        }));
+        if (relay.guildId) this.emit("publisherRejected", relay.guildId, relay, activeSession.relay);
+        const closeTimer = setTimeout(() => socket.close(4009, "Jam em uso"), 50);
+        closeTimer.unref();
+        return true;
+      }
     }
 
-    if (activeSession) {
+    if (activeSession && sameDevice) {
       activeSession.replaced = true;
       activeSession.socket.close(4002, "Reconectando o mesmo computador");
     }
@@ -189,6 +212,10 @@ export class AudioHub extends EventEmitter {
 
   isLive(guildId) {
     return this.publishers.has(guildId);
+  }
+
+  hasActiveAudio(guildId) {
+    return Boolean(this.publishers.get(guildId)?.stream);
   }
 
   requestPublisherReconnect(relayKey) {

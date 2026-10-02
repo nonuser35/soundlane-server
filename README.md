@@ -10,13 +10,15 @@ are represented only by SHA-256 hashes.
 
 ## Features
 
-- Discord slash commands: `/join`, `/leave`, and `/help`
+- Discord slash commands: `/join`, `/leave`, `/release`, and `/help`
 - One-time pairing codes for linking the desktop app to a Discord server
 - Authenticated WebSocket audio ingestion
 - Discord voice playback through `@discordjs/voice`
 - Optional browser-extension listener fan-out
 - Persistent pairing state and audit events
 - Small Docker image suitable for Northflank
+- Persistent jam delegation with Discord voice participant presence
+- Simultaneous 20-second turn requests and confirmed direct transfers
 
 ## Requirements
 
@@ -67,6 +69,7 @@ existing pairings.
 - `POST /api/v1/pairings`
 - `GET /api/v1/pairings/:id`
 - `WS /api/v1/stream?access_token=...`
+- `WS /api/v1/control` with an authenticated first message
 - `WS /api/v1/listen?code=...`
 
 ## Docker

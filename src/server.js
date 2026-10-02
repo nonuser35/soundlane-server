@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { WebSocketServer } from "ws";
 import { AudioHub } from "./audio-hub.js";
 import { DiscordRelayBot } from "./discord-bot.js";
+import { JamControlHub } from "./jam-control-hub.js";
 import { RelayStore } from "./store.js";
 
 const config = {
@@ -17,6 +18,7 @@ const config = {
 const store = new RelayStore(resolve(config.dataDir, "relay-store.json"));
 await store.load();
 const audioHub = new AudioHub(store);
+const jamControlHub = new JamControlHub(store, audioHub);
 let bot = null;
 
 function json(response, statusCode, body) {
@@ -164,6 +166,8 @@ server.on("upgrade", (request, socket, head) => {
       const credential = legacyCredential || auth?.credential || "";
       const accepted = url.pathname === "/api/v1/stream"
         ? await audioHub.acceptPublisher(websocket, credential)
+        : url.pathname === "/api/v1/control"
+          ? await jamControlHub.accept(websocket, credential)
         : url.pathname === "/api/v1/listen"
           ? await audioHub.acceptListener(websocket, credential)
           : false;
@@ -182,8 +186,9 @@ server.listen(config.port, "0.0.0.0", () => {
 });
 
 if (config.discordToken && config.discordClientId) {
-  bot = new DiscordRelayBot(config, store, audioHub);
+  bot = new DiscordRelayBot(config, store, audioHub, jamControlHub);
   await bot.start();
+  jamControlHub.setParticipantProvider((guildId) => bot.getVoiceParticipants(guildId));
   console.log("Bot do Discord conectado.");
 } else {
   console.warn("DISCORD_TOKEN/DISCORD_CLIENT_ID ausentes: API iniciada sem bot.");

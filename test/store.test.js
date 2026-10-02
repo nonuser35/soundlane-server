@@ -8,6 +8,7 @@ import { float32ToPcm16, parseV2Packet } from "../src/audio-hub.js";
 import { OpusJitterStream } from "../src/opus-jitter-stream.js";
 import { AudioHub } from "../src/audio-hub.js";
 import { DiscordRelayBot } from "../src/discord-bot.js";
+import { JamControlHub } from "../src/jam-control-hub.js";
 import { RelayStore } from "../src/store.js";
 
 test("pairing creates a reusable guild session without storing the raw token", async () => {
@@ -145,7 +146,8 @@ test("audio hub identifies protocol v2 as Opus before starting Discord playback"
   }
 
   const store = {
-    resolveAccessTokenFresh: async () => ({ guildId: "guild-1", guildName: "Servidor" })
+    resolveAccessTokenFresh: async () => ({ guildId: "guild-1", guildName: "Servidor", deviceId: "device-1" }),
+    claimDelegation: async (_, relay) => ({ deviceId: relay.deviceId, clientName: relay.clientName })
   };
   const hub = new AudioHub(store);
   const socket = new Socket();
@@ -176,7 +178,14 @@ test("first publisher keeps the jam and a different device is rejected as busy",
     first: { guildId: "guild-1", guildName: "Servidor", deviceId: "device-1", clientName: "PC Sala" },
     second: { guildId: "guild-1", guildName: "Servidor", deviceId: "device-2", clientName: "Notebook" }
   };
-  const hub = new AudioHub({ resolveAccessTokenFresh: async (token) => relays[token] });
+  let delegation = null;
+  const hub = new AudioHub({
+    resolveAccessTokenFresh: async (token) => ({ ...relays[token], delegation }),
+    claimDelegation: async (_, relay) => {
+      delegation ??= { deviceId: relay.deviceId, clientName: relay.clientName };
+      return delegation.deviceId === relay.deviceId ? delegation : null;
+    }
+  });
   const firstSocket = new Socket();
   const secondSocket = new Socket();
 
@@ -215,4 +224,75 @@ test("Discord panel exposes the agreed actions", () => {
   assert.deepEqual(labels, [
     "Entrar", "Sair", "Gerenciar conexao", "Ouvir pela extensao", "Baixar programa", "Ajuda"
   ]);
+});
+
+test("jam control accepts simultaneous requests and transfers the delegation", async () => {
+  class Socket extends EventEmitter {
+    readyState = 1;
+    sent = [];
+    send(message) { this.sent.push(JSON.parse(message)); }
+  }
+  const relays = {
+    owner: { guildId: "guild-1", deviceId: "device-1", pairedByUserId: "user-1", pairedByUserName: "Joao", clientName: "PC 1" },
+    guest: { guildId: "guild-1", deviceId: "device-2", pairedByUserId: "user-2", pairedByUserName: "Maria", clientName: "PC 2" }
+  };
+  const guild = { delegation: { deviceId: "device-1", userId: "user-1", userName: "Joao", grantId: "grant-1" } };
+  const store = {
+    resolveAccessTokenFresh: async (token) => relays[token],
+    getGuild: () => guild,
+    transferDelegation: async (_, relay) => (guild.delegation = {
+      deviceId: relay.deviceId,
+      userId: relay.pairedByUserId,
+      userName: relay.pairedByUserName,
+      grantId: "grant-2"
+    }),
+    clearDelegation: async () => { delete guild.delegation; return true; }
+  };
+  const audioHub = new EventEmitter();
+  audioHub.isLive = () => false;
+  audioHub.hasActiveAudio = () => false;
+  const control = new JamControlHub(store, audioHub);
+  control.setParticipantProvider(async () => [
+    { userId: "user-1", name: "Joao" },
+    { userId: "user-2", name: "Maria" }
+  ]);
+  const ownerSocket = new Socket();
+  const guestSocket = new Socket();
+  await control.accept(ownerSocket, "owner");
+  await control.accept(guestSocket, "guest");
+
+  const guestSession = [...control.sessions.get("guild-1")].find((session) => session.relay.deviceId === "device-2");
+  const ownerSession = [...control.sessions.get("guild-1")].find((session) => session.relay.deviceId === "device-1");
+  await control.requestTurn(guestSession);
+  const request = [...control.requests.get("guild-1").values()][0];
+  assert.equal(request.userName, "Maria");
+  await control.confirmTransfer(ownerSession, request.id, "user-2");
+  assert.equal(guild.delegation.deviceId, "device-2");
+  assert.equal(guestSocket.sent.some((message) => message.type === "delegation_granted"), true);
+  assert.equal(ownerSocket.sent.some((message) => message.type === "delegation_revoked"), true);
+});
+
+test("release clears a silent delegation but never interrupts active audio", async () => {
+  const guild = { delegation: { deviceId: "device-1", grantId: "grant-1" } };
+  let audioActive = true;
+  const store = {
+    getGuild: () => guild,
+    clearDelegation: async () => { delete guild.delegation; return true; }
+  };
+  const audioHub = new EventEmitter();
+  audioHub.hasActiveAudio = () => audioActive;
+  const control = new JamControlHub(store, audioHub);
+
+  assert.deepEqual(await control.releaseDelegation("guild-1"), {
+    released: false,
+    reason: "audio_active"
+  });
+  assert.ok(guild.delegation);
+
+  audioActive = false;
+  assert.deepEqual(await control.releaseDelegation("guild-1"), {
+    released: true,
+    reason: null
+  });
+  assert.equal(guild.delegation, undefined);
 });

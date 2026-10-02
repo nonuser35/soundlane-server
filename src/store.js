@@ -347,6 +347,49 @@ export class RelayStore {
     });
   }
 
+  async claimDelegation(guildId, device) {
+    return await this.withStateMutation(() => {
+      const guild = this.state.guilds[guildId];
+      if (!guild) return null;
+      if (guild.delegation && guild.delegation.deviceId !== device.deviceId) return null;
+      guild.delegation ??= {
+        deviceId: device.deviceId,
+        userId: device.pairedByUserId ?? null,
+        userName: device.pairedByUserName ?? null,
+        clientName: device.clientName ?? "Computador Windows",
+        grantedAt: new Date().toISOString(),
+        grantId: randomUUID()
+      };
+      return guild.delegation;
+    });
+  }
+
+  async transferDelegation(guildId, device) {
+    return await this.withStateMutation(() => {
+      const guild = this.state.guilds[guildId];
+      if (!guild) return null;
+      guild.delegation = {
+        deviceId: device.deviceId,
+        userId: device.pairedByUserId ?? null,
+        userName: device.pairedByUserName ?? null,
+        clientName: device.clientName ?? "Computador Windows",
+        grantedAt: new Date().toISOString(),
+        grantId: randomUUID()
+      };
+      return guild.delegation;
+    });
+  }
+
+  async clearDelegation(guildId, expectedGrantId = null) {
+    return await this.withStateMutation(() => {
+      const guild = this.state.guilds[guildId];
+      if (!guild?.delegation) return false;
+      if (expectedGrantId && guild.delegation.grantId !== expectedGrantId) return false;
+      delete guild.delegation;
+      return true;
+    });
+  }
+
   getGuild(guildId) {
     return this.state.guilds[guildId] ?? null;
   }

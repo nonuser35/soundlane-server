@@ -29,10 +29,11 @@ import {
 const ephemeral = { flags: MessageFlags.Ephemeral };
 
 export class DiscordRelayBot {
-  constructor(config, store, audioHub) {
+  constructor(config, store, audioHub, jamControlHub = null) {
     this.config = config;
     this.store = store;
     this.audioHub = audioHub;
+    this.jamControlHub = jamControlHub;
     this.client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
     this.connections = new Map();
     this.players = new Map();
@@ -51,6 +52,10 @@ export class DiscordRelayBot {
   async start() {
     await this.registerCommands();
     this.client.on(Events.InteractionCreate, (interaction) => this.handleInteraction(interaction).catch(console.error));
+    this.client.on(Events.VoiceStateUpdate, (before, after) => {
+      const guildId = after.guild.id || before.guild.id;
+      this.jamControlHub?.broadcastSnapshot(guildId).catch(console.error);
+    });
     await this.client.login(this.config.discordToken);
     await this.restoreVoiceConnections();
   }
@@ -59,6 +64,7 @@ export class DiscordRelayBot {
     const commands = [
       new SlashCommandBuilder().setName("join").setDescription("Coloca o bot no seu canal de voz"),
       new SlashCommandBuilder().setName("leave").setDescription("Remove o bot do canal de voz"),
+      new SlashCommandBuilder().setName("release").setDescription("Libera uma delegacao sem audio"),
       new SlashCommandBuilder().setName("help").setDescription("Abre o painel de audio")
     ].map((command) => command.toJSON());
     const rest = new REST({ version: "10" }).setToken(this.config.discordToken);
@@ -71,6 +77,7 @@ export class DiscordRelayBot {
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === "join") return this.join(interaction);
       if (interaction.commandName === "leave") return this.leave(interaction);
+      if (interaction.commandName === "release") return this.release(interaction);
       return interaction.reply({ ...ephemeral, ...this.mainPanel(interaction.guildId) });
     }
 
@@ -176,7 +183,7 @@ export class DiscordRelayBot {
     return {
       embeds: [new EmbedBuilder()
         .setTitle("Ajuda")
-        .setDescription("`/join` entra no seu canal.\n`/leave` sai do canal.\n`/help` abre este painel.\n\nCada computador e adicionado apenas uma vez em **Gerenciar conexao**. O primeiro a transmitir assume a jam; os demais aguardam ate ela ficar livre.")
+        .setDescription("`/join` entra no seu canal.\n`/leave` sai do canal.\n`/release` libera uma delegacao que esteja sem audio.\n`/help` abre este painel.\n\nCada computador e adicionado apenas uma vez em **Gerenciar conexao**. O primeiro a transmitir assume a jam; os demais podem pedir a vez.")
         .setColor(0x10975b)],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("relay:main").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
@@ -276,6 +283,7 @@ export class DiscordRelayBot {
     await this.store.setGuildNotificationChannel(interaction.guildId, interaction.channelId);
     const player = this.getPlayer(interaction.guildId);
     connection.subscribe(player);
+    await this.jamControlHub?.broadcastSnapshot(interaction.guildId);
     if (player.state.status === AudioPlayerStatus.Idle && this.audioHub.isLive(interaction.guildId)) {
       this.audioHub.requestPublisherReconnect(interaction.guildId);
     }
@@ -297,7 +305,7 @@ export class DiscordRelayBot {
     const voiceChannelId = this.connections.get(guildId)?.joinConfig.channelId;
     await channel.send(
       `A jam${voiceChannelId ? ` em <#${voiceChannelId}>` : ""} ja esta sendo usada por **${escapeMarkdown(active.clientName ?? "outro participante")}**` +
-      `${active.pairedByUserName ? `, cadastrado por **${escapeMarkdown(active.pairedByUserName)}**` : ""}. ` +
+      `${active.pairedByUserName || active.userName ? `, cadastrado por **${escapeMarkdown(active.pairedByUserName ?? active.userName)}**` : ""}. ` +
       `**${escapeMarkdown(contender.clientName ?? "Outro computador")}** tentou entrar e deve aguardar a transmissao terminar.`
     );
   }
@@ -306,8 +314,42 @@ export class DiscordRelayBot {
     this.connections.get(interaction.guildId)?.destroy();
     this.connections.delete(interaction.guildId);
     await this.store.setGuildVoiceChannel(interaction.guildId, null);
+    await this.jamControlHub?.broadcastSnapshot(interaction.guildId);
     const payload = this.mainPanel(interaction.guildId);
     return interaction.isButton() ? interaction.update(payload) : interaction.reply({ ...ephemeral, ...payload });
+  }
+
+  async release(interaction) {
+    if (!this.store.getGuild(interaction.guildId)) {
+      return interaction.reply({ ...ephemeral, content: "Nenhuma jam configurada neste servidor." });
+    }
+    const result = await this.jamControlHub?.releaseDelegation(interaction.guildId);
+    if (result?.reason === "audio_active") {
+      return interaction.reply({
+        ...ephemeral,
+        content: "A delegacao nao pode ser removida enquanto existe audio sendo transmitido."
+      });
+    }
+    return interaction.reply({
+      ...ephemeral,
+      content: result?.released ? "Delegacao liberada. A jam esta livre." : "A jam ja estava livre."
+    });
+  }
+
+  async getVoiceParticipants(guildId) {
+    const guild = this.client.guilds.cache.get(guildId);
+    const channelId = this.connections.get(guildId)?.joinConfig.channelId ??
+      this.store.getGuild(guildId)?.voiceChannelId;
+    const channel = guild?.channels.cache.get(channelId);
+    if (!channel?.isVoiceBased()) return [];
+    return [...channel.members.values()]
+      .filter((member) => !member.user.bot)
+      .map((member) => ({
+        userId: member.id,
+        name: member.displayName || member.user.globalName || member.user.username,
+        userName: member.user.username,
+        avatarUrl: member.displayAvatarURL({ extension: "png", size: 64 })
+      }));
   }
 
   async restoreVoiceConnections() {
