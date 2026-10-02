@@ -9,6 +9,7 @@ import { OpusJitterStream } from "../src/opus-jitter-stream.js";
 import { AudioHub } from "../src/audio-hub.js";
 import { DiscordRelayBot } from "../src/discord-bot.js";
 import { JamControlHub } from "../src/jam-control-hub.js";
+import { BrowserMetadataHub } from "../src/browser-metadata-hub.js";
 import { RelayStore } from "../src/store.js";
 
 test("pairing creates a reusable guild session without storing the raw token", async () => {
@@ -75,6 +76,42 @@ test("extension can redeem the desktop pairing code and revoke its connection", 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("browser metadata is ephemeral, sanitized, and isolated by extension relay", async () => {
+  class FakeSocket extends EventEmitter {
+    readyState = 1;
+    sent = [];
+    send(value) { this.sent.push(JSON.parse(value)); }
+  }
+
+  const store = {
+    async resolveListenerCredentialFresh(token) {
+      return token === "listener-a" ? { relayId: "relay-a" } : null;
+    },
+    async resolveAccessTokenFresh(token) {
+      return token === "desktop-a" ? { relayId: "relay-a" } :
+        token === "desktop-b" ? { relayId: "relay-b" } : null;
+    }
+  };
+  const hub = new BrowserMetadataHub(store);
+  const publisher = new FakeSocket();
+  const subscriberA = new FakeSocket();
+  const subscriberB = new FakeSocket();
+
+  assert.equal(await hub.acceptPublisher(publisher, "listener-a"), true);
+  assert.equal(await hub.acceptSubscriber(subscriberA, "desktop-a"), true);
+  assert.equal(await hub.acceptSubscriber(subscriberB, "desktop-b"), true);
+  publisher.emit("message", Buffer.from(JSON.stringify({
+    type: "browser_metadata",
+    browser: "Opera",
+    tabs: [{ id: 7, title: "Minha música", origin: "https://music.test", audible: true, muted: false }]
+  })), false);
+
+  assert.equal(subscriberA.sent.at(-1).tabs[0].title, "Minha música");
+  assert.equal(subscriberA.sent.at(-1).tabs[0].origin, "https://music.test");
+  assert.equal(subscriberB.sent.length, 1);
+  assert.equal(Object.hasOwn(subscriberA.sent.at(-1).tabs[0], "url"), false);
 });
 
 test("a pairing code can only be redeemed once under concurrency", async () => {

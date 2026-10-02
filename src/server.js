@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { WebSocketServer } from "ws";
 import { AudioHub } from "./audio-hub.js";
+import { BrowserMetadataHub } from "./browser-metadata-hub.js";
 import { DiscordRelayBot } from "./discord-bot.js";
 import { JamControlHub } from "./jam-control-hub.js";
 import { RelayStore } from "./store.js";
@@ -18,6 +19,7 @@ const config = {
 const store = new RelayStore(resolve(config.dataDir, "relay-store.json"));
 await store.load();
 const audioHub = new AudioHub(store);
+const browserMetadataHub = new BrowserMetadataHub(store);
 const jamControlHub = new JamControlHub(store, audioHub);
 let bot = null;
 
@@ -170,6 +172,10 @@ server.on("upgrade", (request, socket, head) => {
           ? await jamControlHub.accept(websocket, credential)
         : url.pathname === "/api/v1/listen"
           ? await audioHub.acceptListener(websocket, credential)
+        : url.pathname === "/api/v1/browser-metadata/publish"
+          ? await browserMetadataHub.acceptPublisher(websocket, credential)
+        : url.pathname === "/api/v1/browser-metadata/subscribe"
+          ? await browserMetadataHub.acceptSubscriber(websocket, credential)
           : false;
       if (!accepted) websocket.close(4003, "Credencial invalida");
     } catch (error) {
