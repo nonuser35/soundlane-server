@@ -3,7 +3,6 @@ import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
 
 const REQUEST_LIFETIME_MS = 20_000;
-const START_GRACE_MS = 10_000;
 
 export class JamControlHub extends EventEmitter {
   constructor(store, audioHub) {
@@ -18,10 +17,6 @@ export class JamControlHub extends EventEmitter {
 
     audioHub.on("publisherStarted", (guildId) => this.broadcastSnapshot(guildId).catch(console.error));
     audioHub.on("publisherStopped", (guildId) => this.broadcastSnapshot(guildId).catch(console.error));
-    audioHub.on("publisherStartTimedOut", (guildId, delegation) => {
-      this.broadcastSnapshot(guildId, { type: "start_failed" }).catch(console.error);
-      this.emit("delegationStartFailed", guildId, delegation ?? {});
-    });
   }
 
   setParticipantProvider(provider) {
@@ -200,8 +195,7 @@ export class JamControlHub extends EventEmitter {
     }
     this.sendToDevice(guildId, relay.deviceId, {
       type: "delegation_granted",
-      autoStart: true,
-      startGraceMs: START_GRACE_MS
+      autoStart: true
     });
     if (previous?.deviceId && previous.deviceId !== relay.deviceId) {
       this.emit("delegationTransferred", guildId, {
@@ -211,14 +205,6 @@ export class JamControlHub extends EventEmitter {
     }
     await this.broadcastSnapshot(guildId);
 
-    const timer = setTimeout(async () => {
-      const current = this.store.getGuild(guildId)?.delegation;
-      if (current?.grantId !== delegation.grantId || this.audioHub.hasPublisher?.(guildId)) return;
-      await this.store.clearDelegation(guildId, delegation.grantId);
-      await this.broadcastSnapshot(guildId, { type: "start_failed" });
-      this.emit("delegationStartFailed", guildId, delegation);
-    }, START_GRACE_MS);
-    timer.unref();
     return true;
   }
 
@@ -226,13 +212,6 @@ export class JamControlHub extends EventEmitter {
     if (this.audioHub.hasActiveAudio(guildId)) return { released: false, reason: "audio_active" };
     const delegation = this.store.getGuild(guildId)?.delegation;
     if (!delegation) return { released: false, reason: "already_free" };
-    const grantedAt = Date.parse(delegation.grantedAt ?? "");
-    const graceRemaining = Number.isFinite(grantedAt)
-      ? Math.max(0, START_GRACE_MS - (Date.now() - grantedAt))
-      : 0;
-    if (graceRemaining > 0) {
-      return { released: false, reason: "start_grace", retryAfterMs: graceRemaining };
-    }
     this.audioHub.closePendingPublisher?.(guildId);
     const released = await this.store.clearDelegation(guildId, delegation.grantId);
     if (released) {

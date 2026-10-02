@@ -358,32 +358,7 @@ test("release clears a silent delegation but never interrupts active audio", asy
   assert.equal(releasedGuildId, "guild-1");
 });
 
-test("release preserves the ten second startup grace", async () => {
-  const guild = {
-    delegation: {
-      deviceId: "device-1",
-      grantId: "grant-1",
-      grantedAt: new Date().toISOString()
-    }
-  };
-  let cleared = false;
-  const store = {
-    getGuild: () => guild,
-    clearDelegation: async () => { cleared = true; return true; }
-  };
-  const audioHub = new EventEmitter();
-  audioHub.hasActiveAudio = () => false;
-  audioHub.closePendingPublisher = () => false;
-  const control = new JamControlHub(store, audioHub);
-
-  const result = await control.releaseDelegation("guild-1");
-  assert.equal(result.released, false);
-  assert.equal(result.reason, "start_grace");
-  assert.ok(result.retryAfterMs > 0);
-  assert.equal(cleared, false);
-});
-
-test("publisher without a first audio frame times out and releases its grant", async () => {
+test("publisher without a first audio frame keeps its grant until an explicit release", async () => {
   class Socket extends EventEmitter {
     readyState = 1;
     sent = [];
@@ -414,16 +389,16 @@ test("publisher without a first audio frame times out and releases its grant", a
       return true;
     }
   };
-  const hub = new AudioHub(store, { startGraceMs: 15 });
+  const hub = new AudioHub(store);
   const socket = new Socket();
-  const timedOut = new Promise((resolve) => hub.once("publisherStartTimedOut", resolve));
 
   await hub.acceptPublisher(socket, "token");
-  await timedOut;
+  await new Promise((resolve) => setTimeout(resolve, 25));
 
-  assert.equal(guild.delegation, undefined);
-  assert.equal(socket.closed.code, 4010);
-  assert.equal(hub.hasPublisher("guild-1"), false);
+  assert.equal(guild.delegation.grantId, "grant-1");
+  assert.equal(socket.closed, undefined);
+  assert.equal(hub.hasPublisher("guild-1"), true);
+  socket.close(1000, "test complete");
 });
 
 test("a pending publisher cannot start after its delegation was cleared", async () => {
@@ -444,7 +419,7 @@ test("a pending publisher cannot start after its delegation was cleared", async 
     getGuild: () => guild,
     clearDelegation: async () => false
   };
-  const hub = new AudioHub(store, { startGraceMs: 100 });
+  const hub = new AudioHub(store);
   const socket = new Socket();
   let started = false;
   hub.on("publisherStarted", () => { started = true; });

@@ -54,13 +54,6 @@ export class DiscordRelayBot {
     jamControlHub?.on("delegationReleased", (guildId) => {
       this.sendJamNotice(guildId, "A jam foi liberada e esta disponivel.").catch(console.error);
     });
-    jamControlHub?.on("delegationStartFailed", (guildId, delegation) => {
-      const name = delegation.pairedByUserName ?? delegation.clientName ?? "O participante";
-      this.sendJamNotice(
-        guildId,
-        `**${escapeMarkdown(name)}** nao iniciou o audio em 10 segundos. A jam foi liberada.`
-      ).catch(console.error);
-    });
   }
 
   async start() {
@@ -349,13 +342,6 @@ export class DiscordRelayBot {
       return interaction.reply({
         ...ephemeral,
         content: "A delegacao nao pode ser removida enquanto existe audio sendo transmitido."
-      });
-    }
-    if (result?.reason === "start_grace") {
-      const seconds = Math.max(1, Math.ceil((result.retryAfterMs ?? 0) / 1000));
-      return interaction.reply({
-        ...ephemeral,
-        content: `O participante ainda esta nos 10 segundos iniciais. Tente novamente em ${seconds}s.`
       });
     }
     return interaction.reply({

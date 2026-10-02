@@ -4,7 +4,6 @@ import { WebSocket } from "ws";
 import { OpusJitterStream } from "./opus-jitter-stream.js";
 
 const V2_HEADER_BYTES = 12;
-const START_GRACE_MS = 10_000;
 
 function parseV2Packet(frame) {
   if (frame.length <= V2_HEADER_BYTES ||
@@ -27,7 +26,7 @@ function float32ToPcm16(buffer) {
 }
 
 export class AudioHub extends EventEmitter {
-  constructor(store, { startGraceMs = START_GRACE_MS } = {}) {
+  constructor(store) {
     super();
     this.store = store;
     this.publishers = new Map();
@@ -36,7 +35,6 @@ export class AudioHub extends EventEmitter {
     this.bytesReceived = 0;
     this.lastFrameAt = null;
     this.publisherPreparer = async () => ({ ok: true });
-    this.startGraceMs = startGraceMs;
   }
 
   setPublisherPreparer(preparer) {
@@ -120,35 +118,9 @@ export class AudioHub extends EventEmitter {
       grantId: guildDelegation?.grantId ?? null,
       stream: null,
       codec: null,
-      startedAt: new Date().toISOString(),
-      startTimer: null
+      startedAt: new Date().toISOString()
     };
     this.publishers.set(relayKey, session);
-    session.startTimer = setTimeout(async () => {
-      if (this.publishers.get(relayKey) !== session || session.stream) return;
-      try {
-        let released = true;
-        if (relay.guildId) {
-          released = await this.store.clearDelegation(relay.guildId, session.grantId);
-          if (released) this.emit("publisherStartTimedOut", relay.guildId, guildDelegation);
-        }
-        if (socket.readyState === WebSocket.OPEN) {
-          if (released) {
-            socket.send(JSON.stringify({
-              type: "start_failed",
-              message: "Nenhum audio foi detectado em 10 segundos."
-            }));
-          }
-          session.replaced = !released;
-          socket.close(released ? 4010 : 4001, released
-            ? "Nenhum audio detectado"
-            : "Delegacao transferida");
-        }
-      } catch (error) {
-        console.error("Falha ao liberar publisher sem audio:", error);
-      }
-    }, this.startGraceMs);
-    session.startTimer.unref();
     this.notifyJam(relayKey, session);
     console.log("Transmissao iniciada para uma jam.");
 
@@ -170,8 +142,6 @@ export class AudioHub extends EventEmitter {
 
       const v2Packet = parseV2Packet(frame);
       if (!session.stream) {
-        clearTimeout(session.startTimer);
-        session.startTimer = null;
         if (v2Packet) {
           session.codec = "opus";
           session.stream = new OpusJitterStream();
@@ -198,8 +168,6 @@ export class AudioHub extends EventEmitter {
     });
     socket.on("close", async () => {
       try {
-        clearTimeout(session.startTimer);
-        session.startTimer = null;
         if (!session.replaced) {
           if (session.codec === "opus") session.stream?.endInput();
           else session.stream?.end();
