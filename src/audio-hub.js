@@ -156,17 +156,26 @@ export class AudioHub extends EventEmitter {
         }
       }
     });
-    socket.on("close", () => {
-      if (!session.replaced) {
-        if (session.codec === "opus") session.stream?.endInput();
-        else session.stream?.end();
+    socket.on("close", async () => {
+      try {
+        if (!session.replaced) {
+          if (session.codec === "opus") session.stream?.endInput();
+          else session.stream?.end();
+        }
+        if (this.publishers.get(relayKey) === session) {
+          this.publishers.delete(relayKey);
+          if (relay.guildId) {
+            if (!session.replaced) {
+              await this.store.clearDelegation?.(relay.guildId, guildDelegation?.grantId);
+            }
+            this.emit("publisherStopped", relay.guildId);
+          }
+          this.notifyJam(relayKey, null);
+        }
+        console.log("Transmissao encerrada para uma jam.");
+      } catch (error) {
+        console.error("Falha ao encerrar a transmissao:", error);
       }
-      if (this.publishers.get(relayKey) === session) {
-        this.publishers.delete(relayKey);
-        if (relay.guildId) this.emit("publisherStopped", relay.guildId);
-        this.notifyJam(relayKey, null);
-      }
-      console.log("Transmissao encerrada para uma jam.");
     });
     socket.send(JSON.stringify({
       type: "ready",

@@ -231,6 +231,28 @@ test("publisher is refused and delegation released when paired user is not in vo
   assert.equal(hub.activePublisher("guild-1"), null);
 });
 
+test("closing a real publisher releases its delegation", async () => {
+  class Socket extends EventEmitter {
+    readyState = 1;
+    send() {}
+    close() { this.emit("close"); }
+  }
+
+  let clearedGrantId = null;
+  const hub = new AudioHub({
+    resolveAccessTokenFresh: async () => ({ guildId: "guild-1", deviceId: "device-1" }),
+    claimDelegation: async () => ({ deviceId: "device-1", grantId: "grant-1" }),
+    clearDelegation: async (_, grantId) => { clearedGrantId = grantId; return true; }
+  });
+  const socket = new Socket();
+  await hub.acceptPublisher(socket, "token");
+  socket.close();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(clearedGrantId, "grant-1");
+  assert.equal(hub.activePublisher("guild-1"), null);
+});
+
 test("audio hub can request a clean publisher reconnect", () => {
   const hub = new AudioHub(new RelayStore("unused.json"));
   const calls = [];

@@ -22,6 +22,7 @@ are represented only by SHA-256 hashes.
 - Automatic voice-channel join when a paired user starts streaming
 - Clear stream rejection when the paired user is not currently in a voice channel
 - Live desktop status for the saved server and the bot's current voice channel
+- Automatic delegation release when a real publishing session stops
 
 ## Requirements
 
