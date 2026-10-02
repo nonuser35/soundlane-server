@@ -351,6 +351,13 @@ export class DiscordRelayBot {
         content: "A delegacao nao pode ser removida enquanto existe audio sendo transmitido."
       });
     }
+    if (result?.reason === "start_grace") {
+      const seconds = Math.max(1, Math.ceil((result.retryAfterMs ?? 0) / 1000));
+      return interaction.reply({
+        ...ephemeral,
+        content: `O participante ainda esta nos 10 segundos iniciais. Tente novamente em ${seconds}s.`
+      });
+    }
     return interaction.reply({
       ...ephemeral,
       content: result?.released ? "Delegacao liberada. A jam esta livre." : "A jam ja estava livre."
@@ -359,8 +366,7 @@ export class DiscordRelayBot {
 
   async getVoiceParticipants(guildId) {
     const guild = this.client.guilds.cache.get(guildId);
-    const channelId = this.connections.get(guildId)?.joinConfig.channelId ??
-      this.store.getGuild(guildId)?.voiceChannelId;
+    const channelId = this.connections.get(guildId)?.joinConfig.channelId;
     const channel = guild?.channels.cache.get(channelId);
     if (!channel?.isVoiceBased()) return [];
     return [...channel.members.values()]
@@ -402,6 +408,16 @@ export class DiscordRelayBot {
       };
     }
 
+    const currentConnection = this.connections.get(guild.id);
+    const currentChannelId = currentConnection?.joinConfig.channelId;
+    if (this.audioHub.isLive(guild.id) && currentChannelId && currentChannelId !== channel.id) {
+      return {
+        ok: false,
+        type: "voice_unavailable",
+        message: "O bot já está transmitindo em outra call deste servidor. Aguarde a jam terminar."
+      };
+    }
+
     const connection = this.createVoiceConnection(guild, channel.id);
     try {
       await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
@@ -417,7 +433,9 @@ export class DiscordRelayBot {
     }
     connection.subscribe(this.getPlayer(guild.id));
     await this.store.setGuildVoiceChannel(guild.id, channel.id, channel.name);
-    await this.jamControlHub?.broadcastSnapshot(guild.id);
+    this.jamControlHub?.broadcastSnapshot(guild.id).catch((error) => {
+      console.error("Falha ao atualizar os aplicativos depois do autojoin:", error);
+    });
     return { ok: true, channelId: channel.id, channelName: channel.name };
   }
 

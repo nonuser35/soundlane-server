@@ -357,3 +357,146 @@ test("release clears a silent delegation but never interrupts active audio", asy
   assert.equal(guild.delegation, undefined);
   assert.equal(releasedGuildId, "guild-1");
 });
+
+test("release preserves the ten second startup grace", async () => {
+  const guild = {
+    delegation: {
+      deviceId: "device-1",
+      grantId: "grant-1",
+      grantedAt: new Date().toISOString()
+    }
+  };
+  let cleared = false;
+  const store = {
+    getGuild: () => guild,
+    clearDelegation: async () => { cleared = true; return true; }
+  };
+  const audioHub = new EventEmitter();
+  audioHub.hasActiveAudio = () => false;
+  audioHub.closePendingPublisher = () => false;
+  const control = new JamControlHub(store, audioHub);
+
+  const result = await control.releaseDelegation("guild-1");
+  assert.equal(result.released, false);
+  assert.equal(result.reason, "start_grace");
+  assert.ok(result.retryAfterMs > 0);
+  assert.equal(cleared, false);
+});
+
+test("publisher without a first audio frame times out and releases its grant", async () => {
+  class Socket extends EventEmitter {
+    readyState = 1;
+    sent = [];
+    send(message) { this.sent.push(JSON.parse(message)); }
+    close(code, reason) {
+      this.readyState = 3;
+      this.closed = { code, reason };
+      this.emit("close");
+    }
+  }
+
+  const delegation = {
+    deviceId: "device-1",
+    grantId: "grant-1",
+    grantedAt: new Date().toISOString()
+  };
+  const guild = { delegation };
+  const store = {
+    resolveAccessTokenFresh: async () => ({
+      guildId: "guild-1",
+      deviceId: "device-1",
+      delegation
+    }),
+    getGuild: () => guild,
+    clearDelegation: async (_, grantId) => {
+      if (guild.delegation?.grantId !== grantId) return false;
+      delete guild.delegation;
+      return true;
+    }
+  };
+  const hub = new AudioHub(store, { startGraceMs: 15 });
+  const socket = new Socket();
+  const timedOut = new Promise((resolve) => hub.once("publisherStartTimedOut", resolve));
+
+  await hub.acceptPublisher(socket, "token");
+  await timedOut;
+
+  assert.equal(guild.delegation, undefined);
+  assert.equal(socket.closed.code, 4010);
+  assert.equal(hub.hasPublisher("guild-1"), false);
+});
+
+test("a pending publisher cannot start after its delegation was cleared", async () => {
+  class Socket extends EventEmitter {
+    readyState = 1;
+    send() {}
+    close(code, reason) {
+      this.readyState = 3;
+      this.closed = { code, reason };
+      this.emit("close");
+    }
+  }
+
+  const delegation = { deviceId: "device-1", grantId: "grant-1" };
+  const guild = { delegation };
+  const store = {
+    resolveAccessTokenFresh: async () => ({ guildId: "guild-1", deviceId: "device-1", delegation }),
+    getGuild: () => guild,
+    clearDelegation: async () => false
+  };
+  const hub = new AudioHub(store, { startGraceMs: 100 });
+  const socket = new Socket();
+  let started = false;
+  hub.on("publisherStarted", () => { started = true; });
+  await hub.acceptPublisher(socket, "token");
+  delete guild.delegation;
+
+  socket.emit("message", Buffer.alloc(16), true);
+
+  assert.equal(started, false);
+  assert.equal(socket.closed.code, 4001);
+});
+
+test("closing transfer offers notifies every affected desktop", () => {
+  const audioHub = new EventEmitter();
+  const control = new JamControlHub({ getGuild: () => null }, audioHub);
+  const messages = { owner: [], target: [] };
+  control.sessions.set("guild-1", new Set([
+    {
+      relay: { guildId: "guild-1", deviceId: "owner" },
+      socket: { readyState: 1, send: (payload) => messages.owner.push(JSON.parse(payload)) }
+    },
+    {
+      relay: { guildId: "guild-1", deviceId: "target" },
+      socket: { readyState: 1, send: (payload) => messages.target.push(JSON.parse(payload)) }
+    }
+  ]));
+  control.offers.set("offer-1", {
+    id: "offer-1",
+    guildId: "guild-1",
+    fromDeviceId: "owner",
+    targetDeviceId: "target"
+  });
+
+  control.closeOffersForGuild("guild-1");
+
+  assert.equal(control.offers.size, 0);
+  assert.deepEqual(messages.owner[0], { type: "transfer_offer_closed", offerId: "offer-1" });
+  assert.deepEqual(messages.target[0], { type: "transfer_offer_closed", offerId: "offer-1" });
+});
+
+test("snapshot survives temporary Discord provider failures", async () => {
+  const audioHub = new EventEmitter();
+  audioHub.hasActiveAudio = () => false;
+  const control = new JamControlHub({
+    getGuild: () => ({ guildName: "Servidor", delegation: null })
+  }, audioHub);
+  control.setParticipantProvider(async () => { throw new Error("Discord unavailable"); });
+  control.setGuildStatusProvider(async () => { throw new Error("Voice unavailable"); });
+
+  const snapshot = await control.createSnapshot("guild-1", "device-1");
+
+  assert.equal(snapshot.type, "jam_snapshot");
+  assert.deepEqual(snapshot.participants, []);
+  assert.equal(snapshot.guildName, "Servidor");
+});

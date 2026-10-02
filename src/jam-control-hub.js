@@ -16,8 +16,12 @@ export class JamControlHub extends EventEmitter {
     this.participantProvider = async () => [];
     this.guildStatusProvider = async () => ({});
 
-    audioHub.on("publisherStarted", (guildId) => this.broadcastSnapshot(guildId));
-    audioHub.on("publisherStopped", (guildId) => this.broadcastSnapshot(guildId));
+    audioHub.on("publisherStarted", (guildId) => this.broadcastSnapshot(guildId).catch(console.error));
+    audioHub.on("publisherStopped", (guildId) => this.broadcastSnapshot(guildId).catch(console.error));
+    audioHub.on("publisherStartTimedOut", (guildId, delegation) => {
+      this.broadcastSnapshot(guildId, { type: "start_failed" }).catch(console.error);
+      this.emit("delegationStartFailed", guildId, delegation ?? {});
+    });
   }
 
   setParticipantProvider(provider) {
@@ -151,6 +155,7 @@ export class JamControlHub extends EventEmitter {
       targetUserId: target.pairedByUserId,
       expiresAt: new Date(Date.now() + REQUEST_LIFETIME_MS).toISOString()
     };
+    this.closeOffersForGuild(guildId);
     this.offers.set(offer.id, offer);
     this.sendToDevice(guildId, target.deviceId, {
       type: "transfer_offer",
@@ -171,7 +176,7 @@ export class JamControlHub extends EventEmitter {
   async acceptOffer(session, offerId) {
     const offer = this.offers.get(offerId);
     if (!offer || offer.guildId !== session.relay.guildId || offer.targetDeviceId !== session.relay.deviceId) return;
-    this.offers.delete(offerId);
+    this.closeOffersForGuild(offer.guildId);
     await this.transferTo(offer.guildId, session.relay);
   }
 
@@ -180,6 +185,7 @@ export class JamControlHub extends EventEmitter {
     if (!offer || offer.guildId !== session.relay.guildId || offer.targetDeviceId !== session.relay.deviceId) return;
     this.offers.delete(offerId);
     this.sendToDevice(offer.guildId, offer.fromDeviceId, { type: "transfer_offer_declined", offerId });
+    this.sendToDevice(offer.guildId, offer.targetDeviceId, { type: "transfer_offer_closed", offerId });
     await this.broadcastSnapshot(offer.guildId);
   }
 
@@ -188,9 +194,7 @@ export class JamControlHub extends EventEmitter {
     const delegation = await this.store.transferDelegation(guildId, relay);
     if (!delegation) return false;
     this.requests.delete(guildId);
-    for (const [id, offer] of this.offers) {
-      if (offer.guildId === guildId) this.offers.delete(id);
-    }
+    this.closeOffersForGuild(guildId);
     if (previous?.deviceId && previous.deviceId !== relay.deviceId) {
       this.sendToDevice(guildId, previous.deviceId, { type: "delegation_revoked", fadeMs: 300 });
     }
@@ -209,7 +213,7 @@ export class JamControlHub extends EventEmitter {
 
     const timer = setTimeout(async () => {
       const current = this.store.getGuild(guildId)?.delegation;
-      if (current?.grantId !== delegation.grantId || this.audioHub.hasActiveAudio(guildId)) return;
+      if (current?.grantId !== delegation.grantId || this.audioHub.hasPublisher?.(guildId)) return;
       await this.store.clearDelegation(guildId, delegation.grantId);
       await this.broadcastSnapshot(guildId, { type: "start_failed" });
       this.emit("delegationStartFailed", guildId, delegation);
@@ -220,7 +224,17 @@ export class JamControlHub extends EventEmitter {
 
   async releaseDelegation(guildId) {
     if (this.audioHub.hasActiveAudio(guildId)) return { released: false, reason: "audio_active" };
-    const released = await this.store.clearDelegation(guildId);
+    const delegation = this.store.getGuild(guildId)?.delegation;
+    if (!delegation) return { released: false, reason: "already_free" };
+    const grantedAt = Date.parse(delegation.grantedAt ?? "");
+    const graceRemaining = Number.isFinite(grantedAt)
+      ? Math.max(0, START_GRACE_MS - (Date.now() - grantedAt))
+      : 0;
+    if (graceRemaining > 0) {
+      return { released: false, reason: "start_grace", retryAfterMs: graceRemaining };
+    }
+    this.audioHub.closePendingPublisher?.(guildId);
+    const released = await this.store.clearDelegation(guildId, delegation.grantId);
     if (released) {
       await this.broadcastSnapshot(guildId, { type: "delegation_released" });
       this.emit("delegationReleased", guildId);
@@ -244,14 +258,36 @@ export class JamControlHub extends EventEmitter {
     const payload = JSON.stringify(message);
     for (const session of this.sessions.get(guildId) ?? []) {
       if (session.relay.deviceId === deviceId && session.socket.readyState === WebSocket.OPEN) {
-        session.socket.send(payload);
+        try {
+          session.socket.send(payload);
+        } catch (error) {
+          console.error("Falha ao enviar evento para o dispositivo:", error);
+        }
       }
     }
   }
 
+  closeOffersForGuild(guildId) {
+    for (const [id, offer] of this.offers) {
+      if (offer.guildId !== guildId) continue;
+      this.offers.delete(id);
+      const message = { type: "transfer_offer_closed", offerId: id };
+      this.sendToDevice(guildId, offer.fromDeviceId, message);
+      this.sendToDevice(guildId, offer.targetDeviceId, message);
+    }
+  }
+
   async createSnapshot(guildId, currentDeviceId = null) {
-    const voiceParticipants = await this.participantProvider(guildId);
-    const guildStatus = await this.guildStatusProvider(guildId);
+    const [voiceParticipants, guildStatus] = await Promise.all([
+      Promise.resolve().then(() => this.participantProvider(guildId)).catch((error) => {
+        console.error("Falha ao consultar participantes da call:", error);
+        return [];
+      }),
+      Promise.resolve().then(() => this.guildStatusProvider(guildId)).catch((error) => {
+        console.error("Falha ao consultar estado do bot:", error);
+        return {};
+      })
+    ]);
     const guildSessions = [...(this.sessions.get(guildId) ?? [])];
     const requests = [...(this.requests.get(guildId)?.values() ?? [])];
     const delegation = this.store.getGuild(guildId)?.delegation ?? null;
@@ -281,15 +317,20 @@ export class JamControlHub extends EventEmitter {
 
   async sendSnapshot(session) {
     if (session.socket.readyState !== WebSocket.OPEN) return;
-    session.socket.send(JSON.stringify(
-      await this.createSnapshot(session.relay.guildId, session.relay.deviceId)));
+    const snapshot = await this.createSnapshot(session.relay.guildId, session.relay.deviceId);
+    if (session.socket.readyState !== WebSocket.OPEN) return;
+    session.socket.send(JSON.stringify(snapshot));
   }
 
   async broadcastSnapshot(guildId, extra = null) {
     for (const session of this.sessions.get(guildId) ?? []) {
-      await this.sendSnapshot(session);
-      if (extra && session.socket.readyState === WebSocket.OPEN) {
-        session.socket.send(JSON.stringify(extra));
+      try {
+        await this.sendSnapshot(session);
+        if (extra && session.socket.readyState === WebSocket.OPEN) {
+          session.socket.send(JSON.stringify(extra));
+        }
+      } catch (error) {
+        console.error("Falha ao atualizar um aplicativo conectado:", error);
       }
     }
   }
