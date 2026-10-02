@@ -47,6 +47,20 @@ export class DiscordRelayBot {
     audioHub.on("publisherRejected", (guildId, contender, active) => {
       this.notifyJamBusy(guildId, contender, active).catch(console.error);
     });
+    jamControlHub?.on("delegationTransferred", (guildId, event) => {
+      const name = event.current.pairedByUserName ?? event.current.clientName ?? "Outro participante";
+      this.sendJamNotice(guildId, `**${escapeMarkdown(name)}** assumiu a transmissao.`).catch(console.error);
+    });
+    jamControlHub?.on("delegationReleased", (guildId) => {
+      this.sendJamNotice(guildId, "A jam foi liberada e esta disponivel.").catch(console.error);
+    });
+    jamControlHub?.on("delegationStartFailed", (guildId, delegation) => {
+      const name = delegation.pairedByUserName ?? delegation.clientName ?? "O participante";
+      this.sendJamNotice(
+        guildId,
+        `**${escapeMarkdown(name)}** nao iniciou o audio em 10 segundos. A jam foi liberada.`
+      ).catch(console.error);
+    });
   }
 
   async start() {
@@ -308,6 +322,13 @@ export class DiscordRelayBot {
       `${active.pairedByUserName || active.userName ? `, cadastrado por **${escapeMarkdown(active.pairedByUserName ?? active.userName)}**` : ""}. ` +
       `**${escapeMarkdown(contender.clientName ?? "Outro computador")}** tentou entrar e deve aguardar a transmissao terminar.`
     );
+  }
+
+  async sendJamNotice(guildId, content) {
+    const channelId = this.store.getGuild(guildId)?.notificationChannelId;
+    if (!channelId) return;
+    const channel = await this.client.channels.fetch(channelId).catch(() => null);
+    if (channel?.isTextBased()) await channel.send(content);
   }
 
   async leave(interaction) {

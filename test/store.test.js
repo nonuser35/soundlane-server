@@ -252,6 +252,8 @@ test("jam control accepts simultaneous requests and transfers the delegation", a
   audioHub.isLive = () => false;
   audioHub.hasActiveAudio = () => false;
   const control = new JamControlHub(store, audioHub);
+  let transferred;
+  control.once("delegationTransferred", (_, event) => { transferred = event; });
   control.setParticipantProvider(async () => [
     { userId: "user-1", name: "Joao" },
     { userId: "user-2", name: "Maria" }
@@ -270,6 +272,7 @@ test("jam control accepts simultaneous requests and transfers the delegation", a
   assert.equal(guild.delegation.deviceId, "device-2");
   assert.equal(guestSocket.sent.some((message) => message.type === "delegation_granted"), true);
   assert.equal(ownerSocket.sent.some((message) => message.type === "delegation_revoked"), true);
+  assert.equal(transferred.current.deviceId, "device-2");
 });
 
 test("release clears a silent delegation but never interrupts active audio", async () => {
@@ -282,6 +285,8 @@ test("release clears a silent delegation but never interrupts active audio", asy
   const audioHub = new EventEmitter();
   audioHub.hasActiveAudio = () => audioActive;
   const control = new JamControlHub(store, audioHub);
+  let releasedGuildId;
+  control.once("delegationReleased", (guildId) => { releasedGuildId = guildId; });
 
   assert.deepEqual(await control.releaseDelegation("guild-1"), {
     released: false,
@@ -295,4 +300,5 @@ test("release clears a silent delegation but never interrupts active audio", asy
     reason: null
   });
   assert.equal(guild.delegation, undefined);
+  assert.equal(releasedGuildId, "guild-1");
 });

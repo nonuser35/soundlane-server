@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
 
 const REQUEST_LIFETIME_MS = 20_000;
 const START_GRACE_MS = 10_000;
 
-export class JamControlHub {
+export class JamControlHub extends EventEmitter {
   constructor(store, audioHub) {
+    super();
     this.store = store;
     this.audioHub = audioHub;
     this.sessions = new Map();
@@ -192,6 +194,12 @@ export class JamControlHub {
       autoStart: true,
       startGraceMs: START_GRACE_MS
     });
+    if (previous?.deviceId && previous.deviceId !== relay.deviceId) {
+      this.emit("delegationTransferred", guildId, {
+        previous,
+        current: delegation
+      });
+    }
     await this.broadcastSnapshot(guildId);
 
     const timer = setTimeout(async () => {
@@ -199,6 +207,7 @@ export class JamControlHub {
       if (current?.grantId !== delegation.grantId || this.audioHub.hasActiveAudio(guildId)) return;
       await this.store.clearDelegation(guildId, delegation.grantId);
       await this.broadcastSnapshot(guildId, { type: "start_failed" });
+      this.emit("delegationStartFailed", guildId, delegation);
     }, START_GRACE_MS);
     timer.unref();
     return true;
@@ -207,7 +216,10 @@ export class JamControlHub {
   async releaseDelegation(guildId) {
     if (this.audioHub.hasActiveAudio(guildId)) return { released: false, reason: "audio_active" };
     const released = await this.store.clearDelegation(guildId);
-    if (released) await this.broadcastSnapshot(guildId, { type: "delegation_released" });
+    if (released) {
+      await this.broadcastSnapshot(guildId, { type: "delegation_released" });
+      this.emit("delegationReleased", guildId);
+    }
     return { released, reason: released ? null : "already_free" };
   }
 
