@@ -19,6 +19,9 @@ are represented only by SHA-256 hashes.
 - Small Docker image suitable for Northflank
 - Persistent jam delegation with Discord voice participant presence
 - Simultaneous 20-second turn requests and confirmed direct transfers
+- Automatic voice-channel join when a paired user starts streaming
+- Clear stream rejection when the paired user is not currently in a voice channel
+- Live desktop status for the saved server and the bot's current voice channel
 
 ## Requirements
 

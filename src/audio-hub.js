@@ -34,12 +34,18 @@ export class AudioHub extends EventEmitter {
     this.framesReceived = 0;
     this.bytesReceived = 0;
     this.lastFrameAt = null;
+    this.publisherPreparer = async () => ({ ok: true });
+  }
+
+  setPublisherPreparer(preparer) {
+    this.publisherPreparer = preparer;
   }
 
   async acceptPublisher(socket, token) {
     const relay = await this.store.resolveAccessTokenFresh(token);
     if (!relay) return false;
     const relayKey = relay.guildId ?? relay.relayId;
+    let preparedVoiceChannelName = null;
 
     let guildDelegation = null;
     if (relay.guildId) {
@@ -57,6 +63,29 @@ export class AudioHub extends EventEmitter {
         closeTimer.unref();
         return true;
       }
+
+      let preparation;
+      try {
+        preparation = await this.publisherPreparer(relay);
+      } catch (error) {
+        console.error("Falha ao preparar o destino Discord:", error);
+        preparation = {
+          ok: false,
+          type: "voice_unavailable",
+          message: "Nao foi possivel colocar o bot na call agora. Tente novamente."
+        };
+      }
+      if (!preparation?.ok) {
+        await this.store.clearDelegation(relay.guildId, guildDelegation.grantId);
+        socket.send(JSON.stringify({
+          type: preparation?.type ?? "voice_unavailable",
+          message: preparation?.message ?? "Nao foi possivel preparar o canal de voz."
+        }));
+        const closeTimer = setTimeout(() => socket.close(4008, "Canal de voz indisponivel"), 50);
+        closeTimer.unref();
+        return true;
+      }
+      preparedVoiceChannelName = preparation.channelName ?? null;
     }
 
     const activeSession = this.publishers.get(relayKey);
@@ -143,7 +172,8 @@ export class AudioHub extends EventEmitter {
       type: "ready",
       guildName: relay.guildName ?? relay.relayName,
       clientName: relay.clientName,
-      startedAt: session.startedAt
+      startedAt: session.startedAt,
+      voiceChannelName: preparedVoiceChannelName
     }));
     return true;
   }

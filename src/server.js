@@ -189,6 +189,8 @@ if (config.discordToken && config.discordClientId) {
   bot = new DiscordRelayBot(config, store, audioHub, jamControlHub);
   await bot.start();
   jamControlHub.setParticipantProvider((guildId) => bot.getVoiceParticipants(guildId));
+  jamControlHub.setGuildStatusProvider((guildId) => bot.getGuildStatus(guildId));
+  audioHub.setPublisherPreparer((relay) => bot.preparePublisher(relay));
   console.log("Bot do Discord conectado.");
 } else {
   console.warn("DISCORD_TOKEN/DISCORD_CLIENT_ID ausentes: API iniciada sem bot.");

@@ -14,6 +14,7 @@ export class JamControlHub extends EventEmitter {
     this.requests = new Map();
     this.offers = new Map();
     this.participantProvider = async () => [];
+    this.guildStatusProvider = async () => ({});
 
     audioHub.on("publisherStarted", (guildId) => this.broadcastSnapshot(guildId));
     audioHub.on("publisherStopped", (guildId) => this.broadcastSnapshot(guildId));
@@ -21,6 +22,10 @@ export class JamControlHub extends EventEmitter {
 
   setParticipantProvider(provider) {
     this.participantProvider = provider;
+  }
+
+  setGuildStatusProvider(provider) {
+    this.guildStatusProvider = provider;
   }
 
   async accept(socket, token) {
@@ -246,6 +251,7 @@ export class JamControlHub extends EventEmitter {
 
   async createSnapshot(guildId, currentDeviceId = null) {
     const voiceParticipants = await this.participantProvider(guildId);
+    const guildStatus = await this.guildStatusProvider(guildId);
     const guildSessions = [...(this.sessions.get(guildId) ?? [])];
     const requests = [...(this.requests.get(guildId)?.values() ?? [])];
     const delegation = this.store.getGuild(guildId)?.delegation ?? null;
@@ -254,6 +260,8 @@ export class JamControlHub extends EventEmitter {
       delegation,
       audioActive: this.audioHub.hasActiveAudio(guildId),
       currentDeviceId,
+      guildName: this.store.getGuild(guildId)?.guildName ?? null,
+      ...guildStatus,
       participants: voiceParticipants.map((participant) => {
         const onlineSession = guildSessions.find(
           (session) => session.relay.pairedByUserId === participant.userId);

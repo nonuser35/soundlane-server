@@ -329,11 +329,12 @@ export class RelayStore {
     });
   }
 
-  async setGuildVoiceChannel(guildId, voiceChannelId) {
+  async setGuildVoiceChannel(guildId, voiceChannelId, voiceChannelName = null) {
     return await this.withStateMutation(() => {
       const guild = this.state.guilds[guildId];
       if (!guild) return false;
       guild.voiceChannelId = voiceChannelId;
+      guild.voiceChannelName = voiceChannelName;
       return true;
     });
   }

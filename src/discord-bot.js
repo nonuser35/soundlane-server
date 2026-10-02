@@ -293,7 +293,7 @@ export class DiscordRelayBot {
       console.error("Falha ao conectar ao canal de voz:", error);
       return interaction.editReply({ content: "Nao consegui concluir a conexao de voz. Tente /join novamente." });
     }
-    await this.store.setGuildVoiceChannel(interaction.guildId, channel.id);
+    await this.store.setGuildVoiceChannel(interaction.guildId, channel.id, channel.name);
     await this.store.setGuildNotificationChannel(interaction.guildId, interaction.channelId);
     const player = this.getPlayer(interaction.guildId);
     connection.subscribe(player);
@@ -334,7 +334,7 @@ export class DiscordRelayBot {
   async leave(interaction) {
     this.connections.get(interaction.guildId)?.destroy();
     this.connections.delete(interaction.guildId);
-    await this.store.setGuildVoiceChannel(interaction.guildId, null);
+    await this.store.setGuildVoiceChannel(interaction.guildId, null, null);
     await this.jamControlHub?.broadcastSnapshot(interaction.guildId);
     const payload = this.mainPanel(interaction.guildId);
     return interaction.isButton() ? interaction.update(payload) : interaction.reply({ ...ephemeral, ...payload });
@@ -373,6 +373,54 @@ export class DiscordRelayBot {
       }));
   }
 
+  getGuildStatus(guildId) {
+    const connection = this.connections.get(guildId);
+    const channelId = connection?.joinConfig.channelId ?? null;
+    const channel = this.client.guilds.cache.get(guildId)?.channels.cache.get(channelId);
+    return {
+      botConnected: Boolean(connection && channelId),
+      voiceChannelId: channelId,
+      voiceChannelName: channel?.name ?? null
+    };
+  }
+
+  async preparePublisher(relay) {
+    const guild = this.client.guilds.cache.get(relay.guildId);
+    if (!guild) {
+      return {
+        ok: false,
+        type: "voice_unavailable",
+        message: "O bot nao encontrou o servidor vinculado. Abra /help no Discord."
+      };
+    }
+    const channel = guild.voiceStates.cache.get(relay.pairedByUserId)?.channel;
+    if (!channel?.isVoiceBased()) {
+      return {
+        ok: false,
+        type: "voice_required",
+        message: "Entre em uma call do Discord e clique em Iniciar transmissao novamente."
+      };
+    }
+
+    const connection = this.createVoiceConnection(guild, channel.id);
+    try {
+      await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+    } catch (error) {
+      console.error("Falha no autojoin do bot:", error);
+      connection.destroy();
+      this.connections.delete(guild.id);
+      return {
+        ok: false,
+        type: "voice_unavailable",
+        message: "Nao consegui entrar na sua call. Confira as permissoes do bot e tente novamente."
+      };
+    }
+    connection.subscribe(this.getPlayer(guild.id));
+    await this.store.setGuildVoiceChannel(guild.id, channel.id, channel.name);
+    await this.jamControlHub?.broadcastSnapshot(guild.id);
+    return { ok: true, channelId: channel.id, channelName: channel.name };
+  }
+
   async restoreVoiceConnections() {
     for (const guildRecord of Object.values(this.store.state.guilds)) {
       if (!guildRecord.voiceChannelId) continue;
@@ -391,7 +439,12 @@ export class DiscordRelayBot {
   }
 
   createVoiceConnection(guild, channelId) {
-    this.connections.get(guild.id)?.destroy();
+    const existing = this.connections.get(guild.id);
+    if (existing?.joinConfig.channelId === channelId &&
+        existing.state.status !== VoiceConnectionStatus.Destroyed) {
+      return existing;
+    }
+    existing?.destroy();
     const connection = joinVoiceChannel({
       channelId,
       guildId: guild.id,

@@ -198,6 +198,39 @@ test("first publisher keeps the jam and a different device is rejected as busy",
   firstSocket.close();
 });
 
+test("publisher is refused and delegation released when paired user is not in voice", async () => {
+  class Socket extends EventEmitter {
+    readyState = 1;
+    sent = [];
+    send(message) { this.sent.push(JSON.parse(message)); }
+    close(code, reason) { this.closed = { code, reason }; this.emit("close"); }
+  }
+
+  let clearedGrantId = null;
+  const store = {
+    resolveAccessTokenFresh: async () => ({
+      guildId: "guild-1",
+      deviceId: "device-1",
+      pairedByUserId: "user-1"
+    }),
+    claimDelegation: async () => ({ deviceId: "device-1", grantId: "grant-1" }),
+    clearDelegation: async (_, grantId) => { clearedGrantId = grantId; return true; }
+  };
+  const hub = new AudioHub(store);
+  hub.setPublisherPreparer(async () => ({
+    ok: false,
+    type: "voice_required",
+    message: "Entre em uma call."
+  }));
+  const socket = new Socket();
+
+  assert.equal(await hub.acceptPublisher(socket, "token"), true);
+  assert.equal(socket.sent[0].type, "voice_required");
+  assert.equal(socket.sent[0].message, "Entre em uma call.");
+  assert.equal(clearedGrantId, "grant-1");
+  assert.equal(hub.activePublisher("guild-1"), null);
+});
+
 test("audio hub can request a clean publisher reconnect", () => {
   const hub = new AudioHub(new RelayStore("unused.json"));
   const calls = [];
