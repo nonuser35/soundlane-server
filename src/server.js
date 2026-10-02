@@ -122,7 +122,7 @@ const websocketHeartbeat = setInterval(() => {
     websocket.isAlive = false;
     websocket.ping();
   }
-}, 25_000);
+}, 8_000);
 websocketHeartbeat.unref();
 
 function waitForWebSocketAuth(websocket) {

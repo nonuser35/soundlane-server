@@ -59,7 +59,7 @@ export class AudioHub extends EventEmitter {
           activeSince: guildDelegation?.grantedAt ?? null
         }));
         this.emit("publisherRejected", relay.guildId, relay, guildDelegation ?? {});
-        const closeTimer = setTimeout(() => socket.close(4009, "Jam em uso"), 50);
+        const closeTimer = setTimeout(() => socket.close(4009, "Transmissao em uso"), 50);
         closeTimer.unref();
         return true;
       }
@@ -102,7 +102,7 @@ export class AudioHub extends EventEmitter {
           activeSince: activeSession.startedAt
         }));
         if (relay.guildId) this.emit("publisherRejected", relay.guildId, relay, activeSession.relay);
-        const closeTimer = setTimeout(() => socket.close(4009, "Jam em uso"), 50);
+        const closeTimer = setTimeout(() => socket.close(4009, "Transmissao em uso"), 50);
         closeTimer.unref();
         return true;
       }
@@ -122,7 +122,7 @@ export class AudioHub extends EventEmitter {
     };
     this.publishers.set(relayKey, session);
     this.notifyJam(relayKey, session);
-    console.log("Transmissao iniciada para uma jam.");
+    console.log("Transmissao iniciada.");
 
     socket.on("message", (data, isBinary) => {
       if (!isBinary || data.length > 1024 * 1024) return;
@@ -182,7 +182,7 @@ export class AudioHub extends EventEmitter {
           }
           this.notifyJam(relayKey, null);
         }
-        console.log("Transmissao encerrada para uma jam.");
+        console.log("Transmissao encerrada.");
       } catch (error) {
         console.error("Falha ao encerrar a transmissao:", error);
       }

@@ -12,6 +12,7 @@ export class JamControlHub extends EventEmitter {
     this.sessions = new Map();
     this.requests = new Map();
     this.offers = new Map();
+    this.pendingTransfers = new Map();
     this.participantProvider = async () => [];
     this.guildStatusProvider = async () => ({});
 
@@ -49,6 +50,7 @@ export class JamControlHub extends EventEmitter {
     socket.on("close", () => {
       guildSessions.delete(session);
       if (guildSessions.size === 0) this.sessions.delete(relay.guildId);
+      this.cancelPendingTransfersForDevice(relay.guildId, relay.deviceId);
       this.broadcastSnapshot(relay.guildId);
     });
     await this.sendSnapshot(session);
@@ -70,6 +72,10 @@ export class JamControlHub extends EventEmitter {
         return this.declineOffer(session, message.offerId);
       case "release_delegation":
         return this.releaseDelegation(session.relay.guildId);
+      case "delegation_ready":
+        return this.completePreparedTransfer(session, message.transferId);
+      case "delegation_failed":
+        return this.failPreparedTransfer(session, message.transferId, message.message);
       default:
         return undefined;
     }
@@ -138,7 +144,7 @@ export class JamControlHub extends EventEmitter {
 
     if (requestId) {
       this.requests.get(guildId)?.delete(requestId);
-      await this.transferTo(guildId, target);
+      await this.beginPreparedTransfer(guildId, session.relay.deviceId, target);
       return;
     }
 
@@ -172,7 +178,7 @@ export class JamControlHub extends EventEmitter {
     const offer = this.offers.get(offerId);
     if (!offer || offer.guildId !== session.relay.guildId || offer.targetDeviceId !== session.relay.deviceId) return;
     this.closeOffersForGuild(offer.guildId);
-    await this.transferTo(offer.guildId, session.relay);
+    await this.beginPreparedTransfer(offer.guildId, offer.fromDeviceId, session.relay);
   }
 
   async declineOffer(session, offerId) {
@@ -206,6 +212,73 @@ export class JamControlHub extends EventEmitter {
     await this.broadcastSnapshot(guildId);
 
     return true;
+  }
+
+  async beginPreparedTransfer(guildId, fromDeviceId, targetRelay) {
+    const current = this.store.getGuild(guildId)?.delegation;
+    if (!current || current.deviceId !== fromDeviceId || !targetRelay?.deviceId) return false;
+    for (const [id, pending] of this.pendingTransfers) {
+      if (pending.guildId === guildId) this.pendingTransfers.delete(id);
+    }
+    const transfer = {
+      id: randomUUID(),
+      guildId,
+      fromDeviceId,
+      targetDeviceId: targetRelay.deviceId,
+      targetRelay,
+      grantId: current.grantId
+    };
+    this.pendingTransfers.set(transfer.id, transfer);
+    this.sendToDevice(guildId, targetRelay.deviceId, {
+      type: "delegation_prepare",
+      transferId: transfer.id
+    });
+    const timer = setTimeout(() => {
+      if (!this.pendingTransfers.delete(transfer.id)) return;
+      this.sendToDevice(guildId, fromDeviceId, {
+        type: "transfer_prepare_failed",
+        message: "O outro computador não ficou pronto a tempo. Você continua com a transmissão."
+      });
+      this.broadcastSnapshot(guildId);
+    }, 10_000);
+    timer.unref();
+    await this.broadcastSnapshot(guildId);
+    return true;
+  }
+
+  async completePreparedTransfer(session, transferId) {
+    const transfer = this.pendingTransfers.get(transferId);
+    if (!transfer || transfer.guildId !== session.relay.guildId ||
+        transfer.targetDeviceId !== session.relay.deviceId) return;
+    const current = this.store.getGuild(transfer.guildId)?.delegation;
+    this.pendingTransfers.delete(transferId);
+    if (!current || current.deviceId !== transfer.fromDeviceId || current.grantId !== transfer.grantId) return;
+    await this.transferTo(transfer.guildId, session.relay);
+  }
+
+  async failPreparedTransfer(session, transferId, message) {
+    const transfer = this.pendingTransfers.get(transferId);
+    if (!transfer || transfer.guildId !== session.relay.guildId ||
+        transfer.targetDeviceId !== session.relay.deviceId) return;
+    this.pendingTransfers.delete(transferId);
+    this.sendToDevice(transfer.guildId, transfer.fromDeviceId, {
+      type: "transfer_prepare_failed",
+      message: typeof message === "string" && message.trim()
+        ? `A transferência não iniciou: ${message.trim().slice(0, 180)}`
+        : "O outro computador não conseguiu preparar a fonte. Você continua com a transmissão."
+    });
+    await this.broadcastSnapshot(transfer.guildId);
+  }
+
+  cancelPendingTransfersForDevice(guildId, deviceId) {
+    for (const [transferId, transfer] of this.pendingTransfers) {
+      if (transfer.guildId !== guildId || transfer.targetDeviceId !== deviceId) continue;
+      this.pendingTransfers.delete(transferId);
+      this.sendToDevice(guildId, transfer.fromDeviceId, {
+        type: "transfer_prepare_failed",
+        message: "O outro computador ficou offline. Você continua com a transmissão."
+      });
+    }
   }
 
   async releaseDelegation(guildId) {

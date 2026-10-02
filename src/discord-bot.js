@@ -52,7 +52,7 @@ export class DiscordRelayBot {
       this.sendJamNotice(guildId, `**${escapeMarkdown(name)}** assumiu a transmissao.`).catch(console.error);
     });
     jamControlHub?.on("delegationReleased", (guildId) => {
-      this.sendJamNotice(guildId, "A jam foi liberada e esta disponivel.").catch(console.error);
+      this.sendJamNotice(guildId, "A transmissão foi liberada e esta disponivel.").catch(console.error);
     });
   }
 
@@ -115,7 +115,7 @@ export class DiscordRelayBot {
     return [
       { name: "Computadores salvos", value: guild ? `${devices.length}` : "Nenhum", inline: true },
       {
-        name: "Jam agora",
+        name: "Transmissão agora",
         value: active
           ? `**${escapeMarkdown(active.clientName)}**${active.pairedByUserName ? ` (${escapeMarkdown(active.pairedByUserName)})` : ""}`
           : "Livre",
@@ -156,7 +156,7 @@ export class DiscordRelayBot {
       `• **${escapeMarkdown(device.clientName ?? "Computador Windows")}** — adicionado por ${escapeMarkdown(device.pairedByUserName ?? "membro")}`
     ).join("\n");
     const description = guild
-      ? `${deviceList || "Nenhum computador salvo."}\n\nO primeiro que iniciar a transmissao assume a jam; os demais aguardam.`
+      ? `${deviceList || "Nenhum computador salvo."}\n\nO primeiro que iniciar assume a transmissão; os demais aguardam.`
       : "Nenhum programa esta salvo. Baixe o programa, gere um codigo e insira-o aqui uma unica vez.";
     return {
       embeds: [new EmbedBuilder().setTitle("Conexao do programa").setDescription(description).setColor(0x10975b)],
@@ -190,7 +190,7 @@ export class DiscordRelayBot {
     return {
       embeds: [new EmbedBuilder()
         .setTitle("Ajuda")
-        .setDescription("`/join` entra no seu canal.\n`/leave` sai do canal.\n`/release` libera uma delegacao que esteja sem audio.\n`/help` abre este painel.\n\nCada computador e adicionado apenas uma vez em **Gerenciar conexao**. O primeiro a transmitir assume a jam; os demais podem pedir a vez.")
+        .setDescription("`/join` entra no seu canal.\n`/leave` sai do canal.\n`/release` libera uma delegacao que esteja sem audio.\n`/help` abre este painel.\n\nCada computador e adicionado apenas uma vez em **Gerenciar conexao**. O primeiro a transmitir assume a transmissão; os demais podem pedir a vez.")
         .setColor(0x10975b)],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("relay:main").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
@@ -246,7 +246,7 @@ export class DiscordRelayBot {
     }
     await this.store.setGuildNotificationChannel(interaction.guildId, interaction.channelId);
     return interaction.editReply({
-      content: `Computador salvo. Agora existem ${this.store.getGuildDevices(interaction.guildId).length} dispositivo(s) nesta jam.`,
+      content: `Computador salvo. Agora existem ${this.store.getGuildDevices(interaction.guildId).length} dispositivo(s) nesta transmissão.`,
       ...this.mainPanel(interaction.guildId)
     });
   }
@@ -274,7 +274,7 @@ export class DiscordRelayBot {
     const currentChannelId = this.connections.get(interaction.guildId)?.joinConfig.channelId;
     if (active && currentChannelId && currentChannelId !== channel.id) {
       return interaction.editReply({
-        content: `A jam esta sendo usada por **${escapeMarkdown(active.clientName)}** em <#${currentChannelId}>. Aguarde a transmissao terminar.`
+        content: `A transmissão esta sendo usada por **${escapeMarkdown(active.clientName)}** em <#${currentChannelId}>. Aguarde terminar.`
       });
     }
     const connection = this.createVoiceConnection(interaction.guild, channel.id);
@@ -311,7 +311,7 @@ export class DiscordRelayBot {
     if (!channel?.isTextBased()) return;
     const voiceChannelId = this.connections.get(guildId)?.joinConfig.channelId;
     await channel.send(
-      `A jam${voiceChannelId ? ` em <#${voiceChannelId}>` : ""} ja esta sendo usada por **${escapeMarkdown(active.clientName ?? "outro participante")}**` +
+      `A transmissão${voiceChannelId ? ` em <#${voiceChannelId}>` : ""} ja esta sendo usada por **${escapeMarkdown(active.clientName ?? "outro participante")}**` +
       `${active.pairedByUserName || active.userName ? `, cadastrado por **${escapeMarkdown(active.pairedByUserName ?? active.userName)}**` : ""}. ` +
       `**${escapeMarkdown(contender.clientName ?? "Outro computador")}** tentou entrar e deve aguardar a transmissao terminar.`
     );
@@ -335,7 +335,7 @@ export class DiscordRelayBot {
 
   async release(interaction) {
     if (!this.store.getGuild(interaction.guildId)) {
-      return interaction.reply({ ...ephemeral, content: "Nenhuma jam configurada neste servidor." });
+      return interaction.reply({ ...ephemeral, content: "Nenhuma transmissão configurada neste servidor." });
     }
     const result = await this.jamControlHub?.releaseDelegation(interaction.guildId);
     if (result?.reason === "audio_active") {
@@ -346,7 +346,7 @@ export class DiscordRelayBot {
     }
     return interaction.reply({
       ...ephemeral,
-      content: result?.released ? "Delegacao liberada. A jam esta livre." : "A jam ja estava livre."
+      content: result?.released ? "Delegacao liberada. A transmissão esta livre." : "A transmissão ja estava livre."
     });
   }
 
@@ -400,7 +400,7 @@ export class DiscordRelayBot {
       return {
         ok: false,
         type: "voice_unavailable",
-        message: "O bot já está transmitindo em outra call deste servidor. Aguarde a jam terminar."
+        message: "O bot já está transmitindo em outra call deste servidor. Aguarde a transmissão terminar."
       };
     }
 

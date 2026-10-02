@@ -361,10 +361,54 @@ test("jam control accepts simultaneous requests and transfers the delegation", a
   const request = [...control.requests.get("guild-1").values()][0];
   assert.equal(request.userName, "Maria");
   await control.confirmTransfer(ownerSession, request.id, "user-2");
+  assert.equal(guild.delegation.deviceId, "device-1");
+  const preparation = guestSocket.sent.find((message) => message.type === "delegation_prepare");
+  assert.ok(preparation?.transferId);
+  await control.completePreparedTransfer(guestSession, preparation.transferId);
   assert.equal(guild.delegation.deviceId, "device-2");
   assert.equal(guestSocket.sent.some((message) => message.type === "delegation_granted"), true);
   assert.equal(ownerSocket.sent.some((message) => message.type === "delegation_revoked"), true);
   assert.equal(transferred.current.deviceId, "device-2");
+});
+
+test("a failed prepared transfer keeps the current delegation", async () => {
+  class Socket extends EventEmitter {
+    readyState = 1;
+    sent = [];
+    send(message) { this.sent.push(JSON.parse(message)); }
+    close() { this.readyState = 3; this.emit("close"); }
+  }
+
+  const relays = {
+    owner: { guildId: "guild-1", deviceId: "device-1", pairedByUserId: "user-1", clientName: "Joao" },
+    guest: { guildId: "guild-1", deviceId: "device-2", pairedByUserId: "user-2", clientName: "Maria" }
+  };
+  const guild = { delegation: { deviceId: "device-1", grantId: "grant-1" } };
+  const store = {
+    resolveAccessTokenFresh: async (token) => relays[token],
+    getGuild: () => guild
+  };
+  const audioHub = new EventEmitter();
+  audioHub.hasActiveAudio = () => false;
+  const control = new JamControlHub(store, audioHub);
+  const ownerSocket = new Socket();
+  const guestSocket = new Socket();
+  await control.accept(ownerSocket, "owner");
+  await control.accept(guestSocket, "guest");
+  const ownerSession = [...control.sessions.get("guild-1")]
+    .find((session) => session.relay.deviceId === "device-1");
+  const guestSession = [...control.sessions.get("guild-1")]
+    .find((session) => session.relay.deviceId === "device-2");
+
+  await control.confirmTransfer(ownerSession, null, "user-2");
+  const offer = guestSocket.sent.find((message) => message.type === "transfer_offer");
+  await control.acceptOffer(guestSession, offer.offerId);
+  const preparation = guestSocket.sent.find((message) => message.type === "delegation_prepare");
+  await control.failPreparedTransfer(guestSession, preparation.transferId, "Fonte indisponivel");
+
+  assert.equal(guild.delegation.deviceId, "device-1");
+  assert.equal(ownerSocket.sent.some((message) =>
+    message.type === "transfer_prepare_failed" && message.message.includes("Fonte indisponivel")), true);
 });
 
 test("release clears a silent delegation but never interrupts active audio", async () => {
@@ -395,7 +439,7 @@ test("release clears a silent delegation but never interrupts active audio", asy
   assert.equal(releasedGuildId, "guild-1");
 });
 
-test("publisher without a first audio frame keeps its grant until an explicit release", async () => {
+test("publisher without audio frames keeps its grant and connection", async () => {
   class Socket extends EventEmitter {
     readyState = 1;
     sent = [];
@@ -430,7 +474,7 @@ test("publisher without a first audio frame keeps its grant until an explicit re
   const socket = new Socket();
 
   await hub.acceptPublisher(socket, "token");
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await new Promise((resolve) => setTimeout(resolve, 100));
 
   assert.equal(guild.delegation.grantId, "grant-1");
   assert.equal(socket.closed, undefined);
