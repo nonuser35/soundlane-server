@@ -221,6 +221,7 @@ test("Opus jitter buffer preserves packet boundaries during bursty input", () =>
 test("audio hub identifies protocol v2 as Opus before starting Discord playback", async () => {
   class Socket extends EventEmitter {
     readyState = 1;
+    bufferedAmount = 0;
     sent = [];
     send(message) { this.sent.push(message); }
     close() { this.emit("close"); }
