@@ -5,7 +5,7 @@ const customCameras = readStore(STORAGE.custom, []);
 const cameras = [...(window.JANELA_CAMERAS || []), ...customCameras];
 const cameraByKey = Object.fromEntries(cameras.map(camera => [camera.key, camera]));
 const favorites = new Set(readStore(STORAGE.favorites, []));
-const settings = { preferHd:true, showAnime:true, showChat:true, autoRotate:true, rotationSeconds:45, newsSeconds:9, animeSeconds:11, language:'pt-BR', ...readStore(STORAGE.settings, {}) };
+const settings = { preferHd:true, showAnime:true, showChat:true, autoRotate:true, rotationSeconds:45, newsSeconds:9, animeSeconds:11, language:'pt-BR', soundlaneVolume:.8, soundlaneMuted:false, ...readStore(STORAGE.settings, {}) };
 const soundlaneSettings = { server:location.protocol==='https:'?location.origin:'https://p01--soundlane-bot--xz6744xjl6hb.code.run' };
 const sharedSession = new URLSearchParams(location.hash.replace(/^#/,''));
 if (sharedSession.get('lang')) settings.language = sharedSession.get('lang');
@@ -44,6 +44,8 @@ let rotationTicker;
 let rotationRemaining = Number(settings.rotationSeconds) || 45;
 let activeRegion = 'Todos';
 const soundlane = new window.SoundlanePlayer();
+soundlane.setVolume(Number.isFinite(Number(settings.soundlaneVolume)) ? Number(settings.soundlaneVolume) : .8);
+soundlane.setMuted(Boolean(settings.soundlaneMuted));
 
 function showToast(message) {
   toast.textContent = message;
@@ -322,7 +324,7 @@ function mountChat() {
   host.replaceChildren();
   if (!settings.showChat) { host.innerHTML = '<p class="panel-empty">O chat está oculto nas preferências.</p>'; return; }
   const iframe = document.createElement('iframe');
-  iframe.src = `https://www.youtube.com/live_chat?v=${cameraByKey[currentKey].video}&embed_domain=${encodeURIComponent(location.hostname || 'localhost')}`;
+  iframe.src = `https://www.youtube.com/live_chat?v=${cameraByKey[currentKey].video}&embed_domain=${encodeURIComponent(location.hostname || 'localhost')}&dark_theme=1`;
   iframe.title = `Chat ao vivo de ${cameraByKey[currentKey].city}`;
   iframe.referrerPolicy = 'strict-origin-when-cross-origin';
   host.appendChild(iframe);
@@ -433,8 +435,8 @@ $('#customCameraForm').addEventListener('submit',event=>{
   const key=`custom-${video}`; const custom={key,city:form.get('city').trim(),country:form.get('country').trim(),region:'Personalizadas',timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,video,source:'Câmera adicionada por você',news:`${form.get('city')} ${form.get('country')}`,tags:['personalizada'],quality:'HD',poster:`https://i.ytimg.com/vi/${video}/maxresdefault.jpg`,chat:true};
   const saved=readStore(STORAGE.custom,[]).filter(c=>c.key!==key); saved.push(custom); writeStore(STORAGE.custom,saved); showToast('Câmera adicionada — recarregando a Janela'); setTimeout(()=>location.reload(),700);
 });
-$('#soundlaneVolume').value=String(Math.round(soundlane.volume*100));$('#soundlaneVolume').addEventListener('input',event=>{const value=Number(event.target.value);$('#soundlaneVolumeValue').textContent=value;soundlane.setVolume(value/100)});
-$('#soundlaneMute').addEventListener('click',event=>{soundlane.setMuted(!soundlane.muted);event.currentTarget.classList.toggle('active',soundlane.muted);event.currentTarget.textContent=soundlane.muted?'×':'◖';showToast(soundlane.muted?'Soundlane silenciado':'Som do Soundlane retomado')});
+$('#soundlaneVolume').value=String(Math.round(soundlane.volume*100));$('#soundlaneVolumeValue').textContent=String(Math.round(soundlane.volume*100));$('#soundlaneVolume').addEventListener('input',event=>{const value=Number(event.target.value);$('#soundlaneVolumeValue').textContent=value;soundlane.setVolume(value/100);settings.soundlaneVolume=soundlane.volume;writeStore(STORAGE.settings,settings)});
+$('#soundlaneMute').classList.toggle('active',soundlane.muted);$('#soundlaneMute').textContent=soundlane.muted?'×':'◖';$('#soundlaneMute').addEventListener('click',event=>{soundlane.setMuted(!soundlane.muted);settings.soundlaneMuted=soundlane.muted;writeStore(STORAGE.settings,settings);event.currentTarget.classList.toggle('active',soundlane.muted);event.currentTarget.textContent=soundlane.muted?'×':'◖';showToast(soundlane.muted?'Soundlane silenciado':'Som do Soundlane retomado')});
 document.addEventListener('keydown',event=>{if(event.key==='Escape')closeSettings();if(event.key==='1')setView('agora');if(event.key==='2')setView('mosaico');if(event.key==='3')setView('horizonte');if(event.key.toLowerCase()==='m')$('#soundButton').click()});
 
 function registerWebMcpTools(){const context=document.modelContext;if(!context?.registerTool)return;context.registerTool({name:'show_live_place',title:'Mostrar câmera ao vivo',description:'Abre uma câmera ao vivo do catálogo da Janela.',inputSchema:{type:'object',properties:{place:{type:'string',enum:cameras.map(c=>c.key)}},required:['place'],additionalProperties:false},annotations:{readOnlyHint:false,untrustedContentHint:false},execute({place}){selectCamera(place,'agora');return{place,city:cameraByKey[place].city,status:'live_view_opened'}}});context.registerTool({name:'set_janela_view',title:'Mudar visualização',description:'Alterna entre Agora, Mosaico e Horizonte.',inputSchema:{type:'object',properties:{view:{type:'string',enum:['agora','mosaico','horizonte']}},required:['view'],additionalProperties:false},annotations:{readOnlyHint:false,untrustedContentHint:false},execute({view}){setView(view);return{view,status:'view_changed'}}})}

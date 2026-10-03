@@ -57,3 +57,4 @@
 @media(max-width:1120px){.soundlane-bar{grid-template-columns:150px minmax(190px,280px) 1fr 215px}.auto-link b{display:none}}
 @media(max-width:900px){.soundlane-bar{grid-template-columns:minmax(190px,1fr) minmax(140px,1fr) auto}.soundlane-brand{display:none}.auto-link{display:none}}
 @media(max-width:600px){.soundscape{display:none}.soundlane-bar{grid-template-columns:minmax(0,1fr) auto}.news-feature>div:last-child{margin-left:25%;padding:14px}.anime-copy{inset:0 0 0 28%}}
+.chat-panel{background:#0d1113;color-scheme:dark}.chat-host,.chat-host iframe{background:#0d1113;color-scheme:dark}
