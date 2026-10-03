@@ -1,5 +1,5 @@
-const CACHE = 'janela-shell-v6';
-const SHELL = ['/window/', '/window/styles.css', '/window/catalog.js', '/window/soundlane-player.js', '/window/soundlane-worklet.js', '/window/script.js', '/window/manifest.webmanifest', '/window/icon.svg'];
+const CACHE = 'janela-shell-v7';
+const SHELL = ['/window/', '/window/styles.css?v=7', '/window/catalog.js', '/window/soundlane-player.js', '/window/soundlane-worklet.js', '/window/script.js?v=7', '/window/manifest.webmanifest', '/window/icon.svg'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
