@@ -28,6 +28,43 @@ export class BrowserMetadataHub {
     this.store = store;
     this.subscribers = new Map();
     this.latest = new Map();
+    this.windowSubscribers = new Set();
+    this.windowLatest = null;
+  }
+
+  async acceptWindowPublisher(socket, credential) {
+    const relay = await this.store.resolveAccessTokenFresh(credential);
+    if (!relay) return false;
+    socket.on("message", (data, isBinary) => {
+      if (isBinary || data.length > 64 * 1024) return;
+      try {
+        const message = JSON.parse(data.toString("utf8"));
+        if (message.type === "browser_metadata") this.broadcastWindow(sanitizeSnapshot(message));
+      } catch {
+        // Keep the persistent bridge alive when a single update is malformed.
+      }
+    });
+    socket.on("close", () => this.broadcastWindow({
+      type: "browser_metadata", browser: "", updatedAt: new Date().toISOString(), tabs: []
+    }));
+    socket.send(JSON.stringify({ type: "ready", publicWindow: true }));
+    return true;
+  }
+
+  acceptWindowSubscriber(socket) {
+    this.windowSubscribers.add(socket);
+    socket.on("close", () => this.windowSubscribers.delete(socket));
+    socket.send(JSON.stringify({ type: "ready", publicWindow: true }));
+    if (this.windowLatest) socket.send(JSON.stringify(this.windowLatest));
+    return true;
+  }
+
+  broadcastWindow(message) {
+    this.windowLatest = message;
+    const payload = JSON.stringify(message);
+    for (const socket of this.windowSubscribers) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+    }
   }
 
   async acceptPublisher(socket, credential) {

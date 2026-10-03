@@ -358,8 +358,33 @@ test("Discord panel exposes the agreed actions", () => {
   const panel = bot.mainPanel("guild-1");
   const labels = panel.components.flatMap((row) => row.components.map((button) => button.data.label));
   assert.deepEqual(labels, [
-    "Entrar", "Sair", "Gerenciar conexao", "Ouvir pela extensao", "Baixar programa", "Ajuda"
+    "Entrar", "Sair", "Gerenciar conexao", "Ouvir pela extensao", "Abrir Janela", "Baixar programa", "Ajuda"
   ]);
+});
+
+test("Window Host listener survives publisher transfer on the permanent bridge", async () => {
+  class Socket extends EventEmitter {
+    readyState = 1;
+    sent = [];
+    send(value) { this.sent.push(value); }
+    close(code, reason) { this.closeInfo = { code, reason }; this.emit("close"); }
+  }
+  const store = {
+    resolveAccessTokenFresh: async (token) => token ? { relayId: token, clientName: token } : null
+  };
+  const hub = new AudioHub(store);
+  const listener = new Socket();
+  const first = new Socket();
+  const second = new Socket();
+  hub.acceptWindowListener(listener);
+  assert.equal(await hub.acceptWindowPublisher(first, "PC 1"), true);
+  first.emit("message", Buffer.from([0, 1, 2, 3]), true);
+  assert.ok(listener.sent.some((value) => Buffer.isBuffer(value)));
+  assert.equal(await hub.acceptWindowPublisher(second, "PC 2"), true);
+  assert.deepEqual(first.closeInfo, { code: 4002, reason: "Window Host transferido" });
+  second.emit("message", Buffer.from([4, 5, 6, 7]), true);
+  const frames = listener.sent.filter((value) => Buffer.isBuffer(value));
+  assert.equal(frames.length, 2);
 });
 
 test("jam control accepts simultaneous requests and transfers the delegation", async () => {

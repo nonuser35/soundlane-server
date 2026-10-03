@@ -31,10 +31,58 @@ export class AudioHub extends EventEmitter {
     this.store = store;
     this.publishers = new Map();
     this.listeners = new Map();
+    this.windowListeners = new Set();
+    this.windowPublisher = null;
     this.framesReceived = 0;
     this.bytesReceived = 0;
     this.lastFrameAt = null;
     this.publisherPreparer = async () => ({ ok: true });
+  }
+
+  async acceptWindowPublisher(socket, token) {
+    const relay = await this.store.resolveAccessTokenFresh(token);
+    if (!relay) return false;
+    if (this.windowPublisher && this.windowPublisher.socket !== socket) {
+      this.windowPublisher.replaced = true;
+      this.windowPublisher.socket.close(4002, "Window Host transferido");
+    }
+    const session = { socket, relay, codec: null, startedAt: new Date().toISOString(), replaced: false };
+    this.windowPublisher = session;
+    this.notifyWindow({ type: "jam", active: true, activeClientName: relay.clientName ?? "Soundlane", activeSince: session.startedAt });
+    socket.on("message", (data, isBinary) => {
+      if (!isBinary || data.length > 1024 * 1024 || this.windowPublisher !== session) return;
+      const frame = Buffer.from(data);
+      const codec = parseV2Packet(frame) ? "opus" : "pcm-f32";
+      if (!session.codec) {
+        session.codec = codec;
+        this.notifyWindow({ type: "format", codec, sampleRate: 48000, channels: 2, frameMs: codec === "opus" ? 20 : 10 });
+      }
+      for (const listener of this.windowListeners) {
+        if (listener.readyState === WebSocket.OPEN && listener.bufferedAmount < 512 * 1024) listener.send(frame, { binary: true });
+      }
+    });
+    socket.on("close", () => {
+      if (this.windowPublisher === session) {
+        this.windowPublisher = null;
+        this.notifyWindow({ type: "jam", active: false, activeClientName: null, activeSince: null });
+      }
+    });
+    socket.send(JSON.stringify({ type: "ready", clientName: relay.clientName, startedAt: session.startedAt }));
+    return true;
+  }
+
+  acceptWindowListener(socket) {
+    this.windowListeners.add(socket);
+    socket.on("close", () => this.windowListeners.delete(socket));
+    const session = this.windowPublisher;
+    socket.send(JSON.stringify({ type: "ready", live: Boolean(session), codec: session?.codec ?? null,
+      activeClientName: session?.relay.clientName ?? null, activeSince: session?.startedAt ?? null }));
+    return true;
+  }
+
+  notifyWindow(message) {
+    const payload = JSON.stringify(message);
+    for (const listener of this.windowListeners) if (listener.readyState === WebSocket.OPEN) listener.send(payload);
   }
 
   setPublisherPreparer(preparer) {

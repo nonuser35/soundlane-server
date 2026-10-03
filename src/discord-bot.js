@@ -27,6 +27,7 @@ import {
 } from "@discordjs/voice";
 
 const ephemeral = { flags: MessageFlags.Ephemeral };
+const DEFAULT_WINDOW_HOST_URL = "https://janela-mundo-vivo.contaplus201510.chatgpt.site/";
 
 export class DiscordRelayBot {
   constructor(config, store, audioHub, jamControlHub = null) {
@@ -142,6 +143,7 @@ export class DiscordRelayBot {
         ),
         new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId("relay:listen").setLabel("Ouvir pela extensao").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setLabel("Abrir Janela").setStyle(ButtonStyle.Link).setURL(this.config.windowHostSiteUrl || DEFAULT_WINDOW_HOST_URL),
           new ButtonBuilder().setLabel("Baixar programa").setStyle(ButtonStyle.Link).setURL(this.config.downloadUrl),
           new ButtonBuilder().setCustomId("relay:help").setLabel("Ajuda").setStyle(ButtonStyle.Secondary)
         )
@@ -190,7 +192,7 @@ export class DiscordRelayBot {
     return {
       embeds: [new EmbedBuilder()
         .setTitle("Ajuda")
-        .setDescription("`/join` entra no seu canal.\n`/leave` sai do canal.\n`/release` libera uma delegacao que esteja sem audio.\n`/help` abre este painel.\n\nCada computador e adicionado apenas uma vez em **Gerenciar conexao**. O primeiro a transmitir assume a transmissão; os demais podem pedir a vez.")
+        .setDescription(`\`/join\` entra no seu canal.\n\`/leave\` sai do canal.\n\`/release\` libera uma delegacao que esteja sem audio.\n\`/help\` abre este painel.\n\nA **Janela** usa sempre o mesmo endereço: ${this.config.windowHostSiteUrl || DEFAULT_WINDOW_HOST_URL}\n\nCada computador e adicionado apenas uma vez em **Gerenciar conexao**. O primeiro a transmitir assume a transmissão; os demais podem pedir a vez.`)
         .setColor(0x10975b)],
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("relay:main").setLabel("Voltar").setStyle(ButtonStyle.Secondary)
@@ -294,7 +296,10 @@ export class DiscordRelayBot {
     if (player.state.status === AudioPlayerStatus.Idle && this.audioHub.isLive(interaction.guildId)) {
       this.audioHub.requestPublisherReconnect(interaction.guildId);
     }
-    const payload = this.mainPanel(interaction.guildId);
+    const payload = {
+      content: `Janela para compartilhar: ${this.config.windowHostSiteUrl || DEFAULT_WINDOW_HOST_URL}`,
+      ...this.mainPanel(interaction.guildId)
+    };
     return interaction.editReply(payload);
   }
 

@@ -200,10 +200,16 @@ server.on("upgrade", (request, socket, head) => {
       const legacyCredential = url.pathname === "/api/v1/stream"
         ? url.searchParams.get("access_token")
         : url.searchParams.get("code");
-      const auth = legacyCredential ? null : await waitForWebSocketAuth(websocket);
+      const publicWindowPath = url.pathname === "/api/v1/window-host/listen" ||
+        url.pathname === "/api/v1/window-host/metadata/subscribe";
+      const auth = legacyCredential || publicWindowPath ? null : await waitForWebSocketAuth(websocket);
       const credential = legacyCredential || auth?.credential || "";
       const accepted = url.pathname === "/api/v1/stream"
         ? await audioHub.acceptPublisher(websocket, credential)
+        : url.pathname === "/api/v1/window-host/stream"
+          ? await audioHub.acceptWindowPublisher(websocket, credential)
+        : url.pathname === "/api/v1/window-host/listen"
+          ? audioHub.acceptWindowListener(websocket)
         : url.pathname === "/api/v1/control"
           ? await jamControlHub.accept(websocket, credential)
         : url.pathname === "/api/v1/listen"
@@ -212,6 +218,10 @@ server.on("upgrade", (request, socket, head) => {
           ? await browserMetadataHub.acceptPublisher(websocket, credential)
         : url.pathname === "/api/v1/browser-metadata/subscribe"
           ? await browserMetadataHub.acceptSubscriber(websocket, credential)
+        : url.pathname === "/api/v1/window-host/metadata/publish"
+          ? await browserMetadataHub.acceptWindowPublisher(websocket, credential)
+        : url.pathname === "/api/v1/window-host/metadata/subscribe"
+          ? browserMetadataHub.acceptWindowSubscriber(websocket)
           : false;
       if (!accepted) websocket.close(4003, "Credencial invalida");
     } catch (error) {
