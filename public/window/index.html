@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b0e10" />
+  <meta name="description" content="Uma janela viva para acompanhar câmeras, notícias e conversas ao redor do mundo." />
+  <title>Janela — o mundo acontecendo agora</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+    <aside class="rail" aria-label="Navegação principal">
+      <button class="brand" aria-label="Janela — início" data-view="agora"><span class="brand-mark">J</span></button>
+      <nav class="rail-nav">
+        <button class="rail-button active" data-view="agora" aria-label="Agora"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5v8a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Agora</span></button>
+        <button class="rail-button" data-view="mosaico" aria-label="Mosaico"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="13" y="10" width="8" height="11" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/></svg><span>Mosaico</span></button>
+        <button class="rail-button" data-view="horizonte" aria-label="Horizonte"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><span>Horizonte</span></button>
+        <button class="rail-button" id="favoritesButton" aria-label="Abrir favoritas"><svg viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg><span>Favoritas</span><b id="favoriteCount">0</b></button>
+      </nav>
+      <div class="rail-bottom">
+        <button class="rail-button" id="settingsButton" aria-label="Abrir configurações"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg><span>Ajustes</span></button>
+        <button class="rail-button" id="soundButton" aria-label="Ativar som"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zM16 8c1 1 1.5 2.3 1.5 4S17 15 16 16M19 5c2 2 3 4.2 3 7s-1 5-3 7"/></svg><span>Som</span></button>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div class="wordmark"><span>JANELA</span><small>o mundo acontecendo agora</small></div>
+        <div class="worldline" id="worldlineCities" aria-label="Linha do tempo mundial"></div>
+        <div class="top-actions"><select id="languageSelect" class="language-select" aria-label="Idioma"><option value="pt-BR">PT</option><option value="en">EN</option><option value="fr">FR</option><option value="es">ES</option><option value="it">IT</option><option value="de">DE</option></select><span class="live-count"><i></i><b id="liveCount">0</b> lugares vivos</span><button class="icon-button" id="fullscreenButton" aria-label="Tela cheia"><svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg></button></div>
+      </header>
+
+      <section class="soundlane-bar" aria-label="Player Soundlane">
+        <div class="soundlane-brand"><span class="soundlane-mark">S</span><div><b>WINDOW HOST</b><small id="soundlaneState">aguardando sessão</small></div></div>
+        <div class="now-playing"><img id="soundlaneIcon" alt=""/><div class="now-copy"><span>TOCANDO NO SOUNDLANE</span><strong id="soundlaneTitle">À espera de uma transmissão</strong><small id="soundlaneSource">a Janela se conecta automaticamente</small></div></div>
+        <div class="soundscape" aria-label="Horizonte sonoro ao vivo"><canvas id="soundscapeCanvas"></canvas><span id="soundscapeLabel">SINAL EM ESPERA</span></div>
+        <div class="soundlane-controls"><span class="auto-link"><i></i><b>LINK PERMANENTE</b></span><button id="soundlaneMute" class="player-icon" aria-label="Silenciar Soundlane">◖</button><input id="soundlaneVolume" type="range" min="0" max="100" value="80" aria-label="Volume do Soundlane"/><span id="soundlaneVolumeValue">80</span></div>
+      </section>
+
+      <section class="view view-agora active" id="view-agora" aria-label="Lugar em foco">
+        <article class="hero-window visual-card" id="focusStage">
+          <img class="stream-poster" id="focusPoster" alt="Prévia da transmissão" />
+          <div class="live-host" id="focusHost"></div><div class="media-scrim"></div>
+          <div class="place-badge"><span class="live-dot"></span> AO VIVO <b id="qualityBadge">HD</b></div><div class="rotation-status" id="rotationStatus"><span id="rotationCountdown">45</span>s · próxima janela <button id="pauseRotation" aria-label="Pausar rotação">Ⅱ</button></div>
+          <div class="hero-actions"><button class="favorite-place" id="favoritePlace" aria-label="Favoritar este lugar">☆</button><a class="source-badge" id="sourceLink" target="_blank" rel="noopener">Abrir no emissor ↗</a></div>
+          <div class="hero-place"><p id="focusCountry"></p><h1 id="focusCity"></h1><div class="weather"><span id="focusTemp">--°C</span><span id="focusWeather">tempo local</span><span id="focusTime">--:--</span></div></div>
+          <div class="live-caption"><div class="wave"><i></i><i></i><i></i><i></i><i></i></div><div><span>TRANSMISSÃO DIRETA</span><p id="mainCaption">Conectando ao lugar…</p></div><button class="reload-button" id="reloadStream" aria-label="Recarregar">↻</button></div>
+        </article>
+
+        <aside class="story-column">
+          <div class="panel-tabs" role="tablist"><button class="active" data-panel="news">Manchetes</button><button data-panel="chat">Chat ao vivo</button></div>
+          <section class="side-panel active" id="panel-news">
+            <div class="column-heading"><div><span id="newsHeading">Daqui, agora</span><small>vida local antes do ruído</small></div><span class="pulse-label"><i></i> ATUALIZANDO</span></div>
+            <div class="news-carousel-shell"><div class="news-list" id="localNewsList"><p class="panel-empty">Buscando jornais e fontes locais…</p></div><div class="carousel-controls"><button id="newsPrev" aria-label="Manchete anterior">←</button><div id="newsDots"></div><button id="newsNext" aria-label="Próxima manchete">→</button></div></div>
+            <article class="anime-card" id="animeCard"><div class="anime-top"><div><span>ANIME · AGORA</span><small>tendências da temporada</small></div><div><button id="animePrev" aria-label="Anime anterior">←</button><button id="animeNext" aria-label="Próximo anime">→</button></div></div><div class="anime-stage" id="animeCarousel"><p class="panel-empty">Abrindo a temporada…</p></div></article>
+          </section>
+          <section class="side-panel chat-panel" id="panel-chat"><div id="chatHost" class="chat-host"></div><div class="chat-note"><span>Conversa real</span><p>Este é o chat do próprio emissor no YouTube. Alguns canais desativam a conversa ou exigem login.</p></div></section>
+        </aside>
+      </section>
+
+      <section class="view view-mosaico" id="view-mosaico" aria-label="Mosaico vivo"><div class="mosaic-header"><div><span class="eyebrow">AGORA NO MUNDO</span><h1>Mosaico vivo</h1></div><p>Suas favoritas primeiro. Até três sinais tocam juntos para manter tudo leve.</p></div><div class="mosaic-grid" id="mosaicGrid"></div></section>
+      <section class="view view-horizonte" id="view-horizonte" aria-label="Modo Horizonte"><img class="horizon-image" alt="Prévia da transmissão"/><div class="live-host" id="horizonHost"></div><div class="horizon-scrim"></div><div class="horizon-brand">HORIZONTE <span>por Janela</span></div><div class="horizon-meta"><span id="horizonPlace"></span><strong id="horizonTime">--:--</strong><small id="horizonWeather">clima local</small></div><div class="horizon-bottom"><button class="soundscape-button"><span class="wave"><i></i><i></i><i></i><i></i><i></i></span><span><small>SOM DO LUGAR</small>Ouvir a transmissão</span></button><div class="awakening"><span>Outras janelas ao vivo</span><div id="horizonSuggestions"></div></div></div></section>
+      <footer class="ticker" aria-label="Notícias em movimento"><span class="ticker-label">AGORA</span><div class="ticker-viewport"><div class="ticker-track is-short" id="tickerTrack"><span class="news-loading">Buscando notícias locais…</span></div></div><button class="pause-ticker" id="pauseTicker" aria-label="Pausar notícias"><span></span><span></span></button></footer>
+    </main>
+  </div>
+
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="settings-drawer" id="settingsDrawer" aria-label="Câmeras e configurações" aria-hidden="true">
+    <div class="drawer-head"><div><span>MINHA JANELA</span><h2>Câmeras & ajustes</h2></div><button id="closeSettings" aria-label="Fechar">×</button></div>
+    <label class="search-box"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input id="cameraSearch" type="search" placeholder="Buscar cidade, país ou atmosfera…" /></label>
+    <div class="region-filters" id="regionFilters"><button class="active" data-region="Todos">Todos</button><button data-region="Europa">Europa</button><button data-region="Ásia">Ásia</button><button data-region="Américas">Américas</button><button data-region="África">África</button><button data-region="Oceania">Oceania</button></div>
+    <section class="drawer-section"><div class="section-title"><h3>Catálogo ao vivo</h3><span id="catalogResultCount"></span></div><div class="camera-catalog" id="cameraCatalog"></div></section>
+    <section class="drawer-section preferences"><h3>Preferências</h3><label><span><b>Rotação automática</b><small>Favoritas aparecem primeiro; depois, o mundo inteiro</small></span><input type="checkbox" id="autoRotate" checked/><i></i></label><div class="interval-row"><span><b>Tempo em cada câmera</b><small>Intervalo entre lugares ao vivo</small></span><select id="rotationSeconds"><option value="15">15 segundos</option><option value="30">30 segundos</option><option value="45">45 segundos</option><option value="60">1 minuto</option><option value="90">1 min 30 s</option><option value="120">2 minutos</option></select></div><div class="interval-row"><span><b>Tempo por notícia</b><small>Rotação independente das manchetes</small></span><select id="newsSeconds"><option value="6">6 segundos</option><option value="9">9 segundos</option><option value="15">15 segundos</option><option value="30">30 segundos</option></select></div><div class="interval-row"><span><b>Tempo por anime</b><small>Rotação independente do carrossel</small></span><select id="animeSeconds"><option value="8">8 segundos</option><option value="11">11 segundos</option><option value="20">20 segundos</option><option value="30">30 segundos</option></select></div><div class="interval-row"><span><b>Idioma</b><small>Interface e buscas editoriais</small></span><select id="settingsLanguage"><option value="pt-BR">Português</option><option value="en">English</option><option value="fr">Français</option><option value="es">Español</option><option value="it">Italiano</option><option value="de">Deutsch</option></select></div><label><span><b>Preferir alta definição</b><small>Solicita HD quando o emissor oferecer</small></span><input type="checkbox" id="preferHd" checked/><i></i></label><label><span><b>Mostrar anime</b><small>Carrossel vivo da temporada atual</small></span><input type="checkbox" id="showAnime" checked/><i></i></label><label><span><b>Chat ao vivo</b><small>Chat real do canal, quando disponível</small></span><input type="checkbox" id="showChat" checked/><i></i></label></section>
+    <section class="drawer-section add-camera"><details><summary>Adicionar minha própria câmera <span>＋</span></summary><form id="customCameraForm"><div class="form-grid"><label>Nome da cidade<input name="city" required placeholder="Ex.: Akureyri"/></label><label>País<input name="country" required placeholder="Ex.: Islândia"/></label></div><label>Link do YouTube ao vivo<input name="url" required type="url" placeholder="https://youtube.com/watch?v=…"/></label><button type="submit">Adicionar à Janela</button><p>Sem limite. As câmeras adicionadas ficam somente neste dispositivo.</p></form></details></section>
+  </aside>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="catalog.js"></script><script src="soundlane-player.js"></script><script src="script.js"></script>
+</body>
+</html>

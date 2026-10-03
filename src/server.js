@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
-import { resolve } from "node:path";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { extname, resolve, sep } from "node:path";
 import { WebSocketServer } from "ws";
 import { AudioHub } from "./audio-hub.js";
 import { BrowserMetadataHub } from "./browser-metadata-hub.js";
@@ -14,7 +16,7 @@ const config = {
   discordToken: process.env.DISCORD_TOKEN,
   discordClientId: process.env.DISCORD_CLIENT_ID,
   downloadUrl: process.env.DOWNLOAD_URL || "https://github.com",
-  windowHostSiteUrl: process.env.WINDOW_HOST_SITE_URL || "https://janela-mundo-vivo.contaplus201510.chatgpt.site/",
+  windowHostSiteUrl: process.env.WINDOW_HOST_SITE_URL || "https://p01--soundlane-bot--xz6744xjl6hb.code.run/window/",
   dataDir: resolve(process.env.DATA_DIR || "./data")
 };
 
@@ -25,6 +27,12 @@ const browserMetadataHub = new BrowserMetadataHub(store);
 const jamControlHub = new JamControlHub(store, audioHub);
 const newsEngine = new NewsEngine();
 let bot = null;
+const windowRoot = resolve("./public/window");
+const contentTypes = new Map([
+  [".html", "text/html; charset=utf-8"], [".css", "text/css; charset=utf-8"],
+  [".js", "text/javascript; charset=utf-8"], [".json", "application/json; charset=utf-8"],
+  [".svg", "image/svg+xml"], [".png", "image/png"], [".webmanifest", "application/manifest+json"]
+]);
 
 function json(response, statusCode, body) {
   response.writeHead(statusCode, {
@@ -46,9 +54,39 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
 }
 
+async function serveWindowAsset(url, response) {
+  if (url.pathname === "/window") {
+    response.writeHead(308, { location: "/window/" });
+    response.end();
+    return true;
+  }
+  if (!url.pathname.startsWith("/window/")) return false;
+  const relative = decodeURIComponent(url.pathname.slice(8)) || "index.html";
+  let assetPath = resolve(windowRoot, relative);
+  if (assetPath !== windowRoot && !assetPath.startsWith(windowRoot + sep)) {
+    response.writeHead(403);
+    response.end();
+    return true;
+  }
+  try {
+    const info = await stat(assetPath);
+    if (info.isDirectory()) assetPath = resolve(assetPath, "index.html");
+    response.writeHead(200, {
+      "content-type": contentTypes.get(extname(assetPath).toLowerCase()) || "application/octet-stream",
+      "cache-control": extname(assetPath) === ".html" ? "no-cache" : "public, max-age=3600"
+    });
+    createReadStream(assetPath).pipe(response);
+  } catch {
+    response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    response.end("Janela nao encontrada");
+  }
+  return true;
+}
+
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, config.publicBaseUrl);
+    if (request.method === "GET" && await serveWindowAsset(url, response)) return;
     if (request.method === "OPTIONS") {
       response.writeHead(204, {
         "access-control-allow-origin": "*",

@@ -27,7 +27,7 @@ import {
 } from "@discordjs/voice";
 
 const ephemeral = { flags: MessageFlags.Ephemeral };
-const DEFAULT_WINDOW_HOST_URL = "https://janela-mundo-vivo.contaplus201510.chatgpt.site/";
+const DEFAULT_WINDOW_HOST_URL = "https://p01--soundlane-bot--xz6744xjl6hb.code.run/window/";
 
 export class DiscordRelayBot {
   constructor(config, store, audioHub, jamControlHub = null) {

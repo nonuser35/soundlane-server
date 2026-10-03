@@ -43,7 +43,7 @@ function titleKey(title) {
 async function fetchText(url, timeoutMs = 8_000) {
   const response = await fetch(url, {
     signal: AbortSignal.timeout(timeoutMs),
-    headers: { "user-agent": "Soundlane-WindowHost/1.0 (+https://janela-mundo-vivo.contaplus201510.chatgpt.site/)" }
+    headers: { "user-agent": "Soundlane-WindowHost/1.0 (+https://p01--soundlane-bot--xz6744xjl6hb.code.run/window/)" }
   });
   if (!response.ok) throw new Error(`News source returned ${response.status}`);
   return await response.text();
