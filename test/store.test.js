@@ -366,6 +366,7 @@ test("Discord panel exposes the agreed actions", () => {
 test("Window Host listener survives publisher transfer on the permanent bridge", async () => {
   class Socket extends EventEmitter {
     readyState = 1;
+    bufferedAmount = 0;
     sent = [];
     send(value) { this.sent.push(value); }
     close(code, reason) { this.closeInfo = { code, reason }; this.emit("close"); }
