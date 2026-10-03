@@ -56,6 +56,7 @@ npm test
 | `DISCORD_CLIENT_ID` | Yes | Discord application ID used for command registration and invites. |
 | `PUBLIC_BASE_URL` | Yes in production | Public HTTPS URL of this service. |
 | `DOWNLOAD_URL` | No | Desktop app download page shown by the bot. |
+| `WINDOW_HOST_SITE_URL` | No | Public Janela URL used when the desktop app creates a Window Host link. |
 | `PORT` | No | HTTP port. Defaults to `8080`. |
 | `DATA_DIR` | No | Persistent state directory. Defaults to `./data`. |
 | `UPSTASH_REDIS_REST_URL` | No | Upstash REST endpoint for durable pairing storage. |

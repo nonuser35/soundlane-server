@@ -11,6 +11,22 @@ import { DiscordRelayBot } from "../src/discord-bot.js";
 import { JamControlHub } from "../src/jam-control-hub.js";
 import { BrowserMetadataHub } from "../src/browser-metadata-hub.js";
 import { RelayStore } from "../src/store.js";
+import { parseRss } from "../src/news-engine.js";
+
+test("news engine extracts article metadata and cover images", () => {
+  const items = parseRss(`<?xml version="1.0"?><rss><channel><item>
+    <title><![CDATA[Local story]]></title><link>https://news.test/story</link>
+    <pubDate>Fri, 03 Oct 2026 12:00:00 GMT</pubDate><source>Local Paper</source>
+    <media:content url="https://img.test/cover.jpg" type="image/jpeg" />
+  </item></channel></rss>`);
+  assert.deepEqual(items[0], {
+    title: "Local story",
+    link: "https://news.test/story",
+    pubDate: "Fri, 03 Oct 2026 12:00:00 GMT",
+    author: "Local Paper",
+    image: "https://img.test/cover.jpg"
+  });
+});
 
 test("pairing creates a reusable guild session without storing the raw token", async () => {
   const directory = await mkdtemp(join(tmpdir(), "relay-store-"));
@@ -78,6 +94,29 @@ test("extension can redeem the desktop pairing code and revoke its connection", 
   }
 });
 
+test("window host creates an isolated expiring share session", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "relay-window-host-"));
+  try {
+    const store = new RelayStore(join(directory, "store.json"));
+    await store.load();
+    const pairing = await store.createPairing({ clientName: "PC", deviceId: "device-1" }, null);
+    await store.completeExtensionPairing(pairing.code, "extension-1");
+    const session = await store.createWindowHostSession(pairing.accessToken, {
+      clientName: "PC Sala",
+      language: "pt-BR"
+    });
+
+    assert.ok(session.publisherToken);
+    assert.ok(session.viewerToken);
+    assert.equal(store.resolveAccessToken(session.publisherToken).relayId, `window:${session.sessionId}`);
+    assert.equal(store.resolveListenerCredential(session.viewerToken).relayId, `window:${session.sessionId}`);
+    assert.equal(store.resolveListenerCredential(session.publisherToken), null);
+    assert.equal(Object.hasOwn(store.state.windowHosts[session.sessionId], "viewerToken"), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("browser metadata is ephemeral, sanitized, and isolated by extension relay", async () => {
   class FakeSocket extends EventEmitter {
     readyState = 1;
@@ -112,6 +151,11 @@ test("browser metadata is ephemeral, sanitized, and isolated by extension relay"
   assert.equal(subscriberA.sent.at(-1).tabs[0].origin, "https://music.test");
   assert.equal(subscriberB.sent.length, 1);
   assert.equal(Object.hasOwn(subscriberA.sent.at(-1).tabs[0], "url"), false);
+
+  const lateSubscriber = new FakeSocket();
+  assert.equal(await hub.acceptSubscriber(lateSubscriber, "listener-a"), true);
+  assert.equal(lateSubscriber.sent[0].type, "ready");
+  assert.equal(lateSubscriber.sent[1].tabs[0].title, "Minha música");
 });
 
 test("a pairing code can only be redeemed once under concurrency", async () => {

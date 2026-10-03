@@ -27,10 +27,12 @@ export class BrowserMetadataHub {
   constructor(store) {
     this.store = store;
     this.subscribers = new Map();
+    this.latest = new Map();
   }
 
   async acceptPublisher(socket, credential) {
-    const relay = await this.store.resolveListenerCredentialFresh(credential);
+    const relay = await this.store.resolveAccessTokenFresh(credential) ??
+      await this.store.resolveListenerCredentialFresh(credential);
     if (!relay?.relayId) return false;
 
     socket.on("message", (data, isBinary) => {
@@ -55,7 +57,8 @@ export class BrowserMetadataHub {
   }
 
   async acceptSubscriber(socket, credential) {
-    const relay = await this.store.resolveAccessTokenFresh(credential);
+    const relay = await this.store.resolveAccessTokenFresh(credential) ??
+      await this.store.resolveListenerCredentialFresh(credential);
     if (!relay?.relayId) return false;
 
     let listeners = this.subscribers.get(relay.relayId);
@@ -69,10 +72,13 @@ export class BrowserMetadataHub {
       if (listeners.size === 0) this.subscribers.delete(relay.relayId);
     });
     socket.send(JSON.stringify({ type: "ready" }));
+    const snapshot = this.latest.get(relay.relayId);
+    if (snapshot) socket.send(JSON.stringify(snapshot));
     return true;
   }
 
   broadcast(relayId, message) {
+    this.latest.set(relayId, message);
     const payload = JSON.stringify(message);
     for (const socket of this.subscribers.get(relayId) ?? []) {
       if (socket.readyState === WebSocket.OPEN) socket.send(payload);

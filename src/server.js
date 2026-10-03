@@ -5,6 +5,7 @@ import { AudioHub } from "./audio-hub.js";
 import { BrowserMetadataHub } from "./browser-metadata-hub.js";
 import { DiscordRelayBot } from "./discord-bot.js";
 import { JamControlHub } from "./jam-control-hub.js";
+import { NewsEngine } from "./news-engine.js";
 import { RelayStore } from "./store.js";
 
 const config = {
@@ -13,6 +14,7 @@ const config = {
   discordToken: process.env.DISCORD_TOKEN,
   discordClientId: process.env.DISCORD_CLIENT_ID,
   downloadUrl: process.env.DOWNLOAD_URL || "https://github.com",
+  windowHostSiteUrl: process.env.WINDOW_HOST_SITE_URL || "https://janela-mundo-vivo.contaplus201510.chatgpt.site/",
   dataDir: resolve(process.env.DATA_DIR || "./data")
 };
 
@@ -21,6 +23,7 @@ await store.load();
 const audioHub = new AudioHub(store);
 const browserMetadataHub = new BrowserMetadataHub(store);
 const jamControlHub = new JamControlHub(store, audioHub);
+const newsEngine = new NewsEngine();
 let bot = null;
 
 function json(response, statusCode, body) {
@@ -63,6 +66,15 @@ const server = createServer(async (request, response) => {
       });
     }
 
+    if (request.method === "GET" && url.pathname === "/api/v1/news") {
+      const query = (url.searchParams.get("q") || "").trim();
+      if (query.length < 2) return json(response, 400, { error: "Busca obrigatoria" });
+      const language = url.searchParams.get("lang") || "pt-BR";
+      const limit = Math.max(1, Math.min(40, Number(url.searchParams.get("limit")) || 24));
+      const items = await newsEngine.search(query, language, limit);
+      return json(response, 200, { query, language, updatedAt: new Date().toISOString(), items });
+    }
+
     if (request.method === "POST" && url.pathname === "/api/v1/pairings") {
       const body = await readJson(request);
       if (!body.deviceId) return json(response, 400, { error: "deviceId obrigatorio" });
@@ -70,6 +82,30 @@ const server = createServer(async (request, response) => {
         ? `https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(config.discordClientId)}&scope=bot%20applications.commands&permissions=3145728`
         : null;
       return json(response, 201, await store.createPairing(body, inviteUrl));
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/v1/window-host/sessions") {
+      const body = await readJson(request);
+      if (!body.credential) return json(response, 400, { error: "Credencial obrigatoria" });
+      const session = await store.createWindowHostSession(body.credential, {
+        clientName: body.clientName,
+        relayName: "Window Host",
+        language: body.language
+      });
+      if (!session) return json(response, 403, { error: "Credencial invalida" });
+      const shareUrl = new URL(config.windowHostSiteUrl);
+      shareUrl.hash = new URLSearchParams({
+        window: session.viewerToken,
+        server: config.publicBaseUrl,
+        lang: session.language
+      }).toString();
+      return json(response, 201, {
+        sessionId: session.sessionId,
+        publisherToken: session.publisherToken,
+        viewerToken: session.viewerToken,
+        shareUrl: shareUrl.toString(),
+        expiresAt: session.expiresAt
+      });
     }
 
     if (request.method === "POST" && url.pathname === "/api/v1/extensions/pair") {

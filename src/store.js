@@ -7,6 +7,7 @@ const PAIRING_LIFETIME_MS = 10 * 60 * 1000;
 const PAIRING_CODE_LIFETIME_SECONDS = PAIRING_LIFETIME_MS / 1000;
 const PAIRING_RESULT_LIFETIME_SECONDS = 20 * 60;
 const STATE_LOCK_LIFETIME_MS = 10_000;
+const WINDOW_HOST_LIFETIME_MS = 12 * 60 * 60 * 1000;
 
 function randomCode(length) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -18,10 +19,15 @@ function hashToken(token) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function cleanName(value, fallback) {
+  const cleaned = typeof value === "string" ? value.trim().slice(0, 120) : "";
+  return cleaned || fallback;
+}
+
 export class RelayStore {
   constructor(filePath) {
     this.filePath = filePath;
-    this.state = { guilds: {}, extensions: {}, audit: [] };
+    this.state = { guilds: {}, extensions: {}, windowHosts: {}, audit: [] };
     this.pairings = new Map();
     this.redis = null;
     this.redisKey = process.env.UPSTASH_REDIS_KEY || "soundlane:relay-state:v1";
@@ -74,6 +80,7 @@ export class RelayStore {
   normalizeState() {
     this.state.guilds ??= {};
     this.state.extensions ??= {};
+    this.state.windowHosts ??= {};
     this.state.audit ??= [];
   }
 
@@ -82,7 +89,7 @@ export class RelayStore {
     const storedState = await this.redis.get(this.redisKey);
     this.state = storedState
       ? (typeof storedState === "string" ? JSON.parse(storedState) : storedState)
-      : { guilds: {}, extensions: {}, audit: [] };
+      : { guilds: {}, extensions: {}, windowHosts: {}, audit: [] };
     this.normalizeState();
   }
 
@@ -92,6 +99,40 @@ export class RelayStore {
 
   pairingCodeKey(code) {
     return `${this.redisKey}:pairing:code:${code}`;
+  }
+
+  pruneWindowHosts() {
+    const now = Date.now();
+    for (const [sessionId, session] of Object.entries(this.state.windowHosts)) {
+      if (new Date(session.expiresAt).getTime() <= now) delete this.state.windowHosts[sessionId];
+    }
+  }
+
+  async createWindowHostSession(ownerCredential, client = {}) {
+    const owner = await this.resolveAccessTokenFresh(ownerCredential);
+    if (!owner) return null;
+
+    const publisherToken = randomBytes(32).toString("base64url");
+    const viewerToken = randomBytes(32).toString("base64url");
+    const sessionId = randomUUID();
+    const record = await this.withStateMutation(() => {
+      this.pruneWindowHosts();
+      const next = {
+        sessionId,
+        relayId: `window:${sessionId}`,
+        relayName: cleanName(client.relayName, "Window Host"),
+        clientName: cleanName(client.clientName, owner.clientName || "Soundlane"),
+        publisherTokenHash: hashToken(publisherToken),
+        viewerTokenHash: hashToken(viewerToken),
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + WINDOW_HOST_LIFETIME_MS).toISOString(),
+        language: cleanName(client.language, "pt-BR")
+      };
+      this.state.windowHosts[sessionId] = next;
+      this.addAudit({ action: "window_host_created", sessionId, clientName: next.clientName });
+      return next;
+    });
+    return { ...record, publisherToken, viewerToken };
   }
 
   async withStateMutation(mutate) {
@@ -419,8 +460,12 @@ export class RelayStore {
         (candidate) => candidate.accessTokenHash === tokenHash);
       if (device) return { ...guild, ...device };
     }
-    return Object.values(this.state.extensions).find(
-      (extension) => extension.accessTokenHash === tokenHash) ?? null;
+    const extension = Object.values(this.state.extensions).find(
+      (candidate) => candidate.accessTokenHash === tokenHash);
+    if (extension) return extension;
+    return Object.values(this.state.windowHosts).find(
+      (session) => session.publisherTokenHash === tokenHash &&
+        new Date(session.expiresAt).getTime() > Date.now()) ?? null;
   }
 
   async resolveAccessTokenFresh(token) {
@@ -434,8 +479,12 @@ export class RelayStore {
       (guild) => guild.listenerCode === normalized.toUpperCase());
     if (legacyGuild) return legacyGuild;
     const tokenHash = hashToken(normalized);
-    return Object.values(this.state.extensions).find(
-      (extension) => extension.listenerTokenHash === tokenHash) ?? null;
+    const extension = Object.values(this.state.extensions).find(
+      (candidate) => candidate.listenerTokenHash === tokenHash);
+    if (extension) return extension;
+    return Object.values(this.state.windowHosts).find(
+      (session) => session.viewerTokenHash === tokenHash &&
+        new Date(session.expiresAt).getTime() > Date.now()) ?? null;
   }
 
   async resolveListenerCredentialFresh(credential) {
